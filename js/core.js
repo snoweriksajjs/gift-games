@@ -818,15 +818,16 @@
   }
   function renderProfile() {
     if (tab !== "pageProfile") return;
-    const st = state.stats, rate = st.spins ? Math.round((st.wins / st.spins) * 100) + "%" : "0%";
-    const kpi = (v, l) => `<div class="card kpi"><b>${v}</b><span>${l}</span></div>`;
-    $("#kpis").innerHTML = kpi(fmt(st.spins), "игр") + kpi(rate, "побед") +
-      kpi(`${fmtS(st.best)} ${STAR}`, "лучший выигрыш") + kpi(`${fmtS(st.wagered)} ${STAR}`, "поставлено") +
-      kpi(st.bestStreak, "лучшая серия") + kpi(st.bestCrash ? xf(st.bestCrash) : "×0", "лучший краш");
-    $("#profCount").textContent = state.inv.length || "";
-    $("#profGrid").innerHTML = state.inv.length
-      ? [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price).map((it) => tile(byId[it.id], "", `data-uid="${it.uid}"`)).join("")
-      : `<div class="empty">Подарков пока нет</div>`;
+    const gifts = [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price);
+    const total = gifts.reduce((a, it) => a + byId[it.id].price, 0);
+    // шапка профиля окрашивается в фон самого дорогого подарка
+    const top = gifts.length ? byId[gifts[0].id] : null, banner = $("#pfBanner");
+    banner.style.cssText = top ? bg(top) : "";
+    banner.classList.toggle("has", !!top);
+    $("#profCount").innerHTML = gifts.length ? `${gifts.length} · ${STAR} ${fmtS(total)}` : "";
+    $("#profGrid").innerHTML = gifts.length
+      ? gifts.map((it) => tile(byId[it.id], "", `data-uid="${it.uid}"`)).join("")
+      : `<div class="empty">Здесь будут выигранные подарки</div>`;
   }
 
   // ---------- клавиатура ----------
