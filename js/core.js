@@ -121,9 +121,32 @@
     })(t0);
   }
 
-  // ---------- вибрация ----------
-  // Звука в приложении нет. Все отклики идут через вибрацию Telegram,
-  // вне Telegram на Android используется navigator.vibrate.
+  // ---------- звук ----------
+  // Тихие интерфейсные звуки из набора Google Material Design (лицензия CC BY 4.0).
+  const SOUNDS = ["tick", "tap", "open", "close", "toggle", "win", "step", "lose", "coin", "bounce", "boom", "crack"];
+  const bufs = {};
+  let actx = null;
+  function audio() {
+    if (!actx) {
+      try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+      SOUNDS.forEach((n) => fetch(`sounds/${n}.wav`).then((r) => r.arrayBuffer())
+        .then((b) => new Promise((ok, no) => actx.decodeAudioData(b, ok, no))).then((buf) => (bufs[n] = buf)).catch(() => {}));
+    }
+    if (actx.state === "suspended") actx.resume();
+    return actx;
+  }
+  function snd(name, vol = 0.4, rate = 1) {
+    if (state.sound === false) return;
+    const ctx = audio(), b = bufs[name];
+    if (!ctx || !b) return;
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = b; src.playbackRate.value = rate; g.gain.value = vol;
+    src.connect(g).connect(ctx.destination); src.start();
+  }
+  document.addEventListener("pointerdown", audio, { once: true });
+
+  // ---------- отклик: вибрация и звук вместе ----------
+  // Вибрация идёт через Telegram, вне Telegram на Android через navigator.vibrate.
   const canBuzz = () => !!navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive);
   const hap = {
     _t: 0,
@@ -138,17 +161,19 @@
       if (inTg) { try { tg.HapticFeedback.notificationOccurred(type); } catch {} }
       else if (canBuzz()) navigator.vibrate(type === "success" ? [12, 60, 12] : [40, 40, 40]);
     },
-    tick(gap = 90) { const n = performance.now(); if (n - this._t > gap) { this._t = n; this._i("light"); } },
-    soft() { if (!this.on) return; if (inTg) { try { tg.HapticFeedback.selectionChanged(); } catch {} } else if (canBuzz()) navigator.vibrate(5); },
+    tick(gap = 90, rate = 1) { const n = performance.now(); if (n - this._t > gap) { this._t = n; this._i("light"); snd("crack", 0.16, rate); } },
+    soft() { snd("tap", 0.3); if (!this.on) return; if (inTg) { try { tg.HapticFeedback.selectionChanged(); } catch {} } else if (canBuzz()) navigator.vibrate(5); },
     select() { this.soft(); },
-    hit() { this._i("medium"); },
-    stop() { this._i("rigid"); },
-    bounce() { this._i("medium"); },
-    rise(m) { this.tick(Math.max(55, 260 - m * 26)); },      // чем выше множитель, тем чаще толчки
-    coin() { this._i("light"); setTimeout(() => this._i("medium"), 70); },
-    win() { this._n("success"); setTimeout(() => this._i("light"), 180); setTimeout(() => this._i("light"), 300); },
-    lose() { this._n("error"); },
-    boom() { this._i("heavy"); setTimeout(() => this._i("heavy"), 90); },
+    hit() { this._i("medium"); snd("tap", 0.45); },
+    stop() { this._i("rigid"); snd("bounce", 0.35, 0.8); },
+    bounce() { this._i("medium"); snd("bounce", 0.5); },
+    crack(n = 1) { this._i(n >= 3 ? "heavy" : "medium"); snd("crack", 0.7, 1.15 - n * 0.12); },
+    rise(m) { this.tick(Math.max(55, 260 - m * 26), 1 + Math.min(m, 12) * 0.05); },   // чем выше множитель, тем чаще и выше
+    coin() { this._i("light"); setTimeout(() => this._i("medium"), 70); snd("coin", 0.4); },
+    step() { this._i("light"); setTimeout(() => this._i("medium"), 70); snd("step", 0.4); },
+    win() { this._n("success"); setTimeout(() => this._i("light"), 180); setTimeout(() => this._i("light"), 300); snd("win", 0.5); },
+    lose() { this._n("error"); snd("lose", 0.5); },
+    boom() { this._i("heavy"); setTimeout(() => this._i("heavy"), 90); snd("boom", 0.4); },
     result(ok) { ok ? this.win() : this.lose(); },
   };
 
@@ -372,13 +397,15 @@
     sheet.dispatchEvent(new Event("sheet:open"));
     void sheet.offsetWidth;
     scrim.classList.add("on"); sheet.classList.add("on");
-    document.body.style.overflow = "hidden"; syncDucks();
+    document.body.style.overflow = "hidden";
+    snd("open", 0.3); syncDucks();
     if (inTg) try { tg.BackButton.show(); } catch {}
   }
   function closeSheet(instant) {
     const sheet = sheetEl; if (!sheet) return;
     sheetEl = null;
     sheet.classList.remove("on"); scrim.classList.remove("on");
+    if (!instant) snd("close", 0.3);
     document.body.style.overflow = "";
     if (inTg) try { tg.BackButton.hide(); } catch {}
     const hide = () => { if (sheetEl !== sheet) sheet.hidden = true; if (!sheetEl) scrim.hidden = true; syncDucks(); };
@@ -581,29 +608,30 @@
     state.fair.clientSeed = v; save(); toast("Сид сохранён");
   });
 
-  // ---------- пополнение ----------
-  // Здесь подключается оплата звёздами: бот создаёт счёт (createInvoiceLink, валюта XTR),
-  // приложение открывает его через tg.openInvoice(link) и начисляет баланс после статуса "paid".
-  const depAmount = $("#depAmount"), depConfirm = $("#depConfirm"), amounts = $("#amounts");
-  const syncDep = () => {
-    const a = Math.floor(Number(depAmount.value) || 0);
-    depConfirm.innerHTML = `Пополнить на ${STAR}${fmt(a)}`;
-    depConfirm.disabled = a < 10;
-    all(".pack", amounts).forEach((x) => x.classList.toggle("on", Number(x.dataset.a) === a));
+  // ---------- пополнение звёздами Telegram ----------
+  // Счета созданы заранее через бота (createInvoiceLink, валюта XTR). Приложение открывает счёт
+  // через tg.openInvoice и начисляет баланс после статуса "paid".
+  // Сейчас начисление идёт в браузере. В рабочем сервисе баланс начисляет сервер по событию successful_payment.
+  const INVOICES = {
+    10: "https://t.me/$LN-JAKgBuUtpIgAAC7KDKjg67XQ", 50: "https://t.me/$kXUHQagBuUtqIgAARB2LhvlMtWw",
+    100: "https://t.me/$ezBuK6gBuUtrIgAANyk_fOQzlDc", 250: "https://t.me/$DZhfNqgBuUtsIgAAkpSgFHyCkUs",
+    500: "https://t.me/$Bv2e5qgBuUttIgAAlGn5BUAl2Jo", 1000: "https://t.me/$ZyPPGagBuUtuIgAA-2oWJe2MAx0",
   };
-  amounts.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-a]"); if (!b) return;
-    depAmount.value = b.dataset.a; hap.select(); syncDep();
-  });
-  depAmount.addEventListener("input", syncDep);
-  depConfirm.addEventListener("click", () => {
-    const a = Math.floor(Number(depAmount.value) || 0);
-    if (a < 10) return;
-    closeSheet(); state.balance += a; save();
-    hap.coin(); renderBalance(true); renderStake();
-    toast(`Баланс пополнен на ${fmt(a)} звёзд`);
-  });
+  function buyStars(n) {
+    if (!INVOICES[n]) return;
+    if (!inTg || !tg.openInvoice) return toast("Пополнение работает внутри Telegram");
+    hap.soft();
+    tg.openInvoice(INVOICES[n], (status) => {
+      if (status === "paid") {
+        state.balance += n; (state.deposits = state.deposits || []).push({ n, t: Date.now() }); save();
+        closeSheet(); hap.coin(); renderBalance(true); renderStake();
+        toast(`Баланс пополнен на ${fmt(n)} звёзд`);
+      } else if (status === "failed") toast("Оплата не прошла");
+    });
+  }
+  $("#amounts").addEventListener("click", (e) => { const b = e.target.closest("[data-a]"); if (b) buyStars(Number(b.dataset.a)); });
   all("[data-deposit]").forEach((b) => b.addEventListener("click", () => openSheet($("#depositSheet"))));
+  $("#withdrawBtn").addEventListener("click", () => openSheet($("#withdrawSheet")));
 
   // ---------- карточка подарка ----------
   const giftSheet = $("#giftSheet");
@@ -777,7 +805,9 @@
       if (user && user.photo_url) { a.style.backgroundImage = `url("${user.photo_url}")`; a.textContent = ""; }
     });
     $("#meHandle").textContent = user ? (user.username ? "@" + user.username : "ID " + user.id) : "Войдите через Telegram";
-    const hapSw = $("#hapSw");
+    const hapSw = $("#hapSw"), soundSw = $("#soundSw");
+    soundSw.checked = state.sound !== false;
+    soundSw.addEventListener("change", () => { state.sound = soundSw.checked; save(); snd("toggle", 0.4); });
     hapSw.checked = state.haptics !== false;
     hapSw.addEventListener("change", () => { state.haptics = hapSw.checked; save(); hap.hit(); });
     $("#profGrid").addEventListener("click", (e) => {
@@ -809,7 +839,7 @@
 
   // ---------- запуск ----------
   function start() {
-    initDucks(); initProfile(); initFriends(); syncDep();
+    initDucks(); initProfile(); initFriends();
     all("[data-balance]").forEach((n) => (n.textContent = fmt(state.balance)));
     Object.values(modes).forEach((m) => m.init && m.init());
     renderFeed(); renderTasks();
@@ -824,7 +854,7 @@
   const App = window.App = {
     HOUSE, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
     $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
-    hap, setDuck, playDuck, syncDucks, initDucks,
+    hap, snd, duckData, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,
     Fair, sha256, hex, enc, nextRound, Dial, confetti, PARTY, toast,
     openSheet, closeSheet, get sheet() { return sheetEl; },

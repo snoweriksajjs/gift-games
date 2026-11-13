@@ -6,7 +6,7 @@
 (() => {
   "use strict";
   const A = window.App, { $, STAR, fmt, fmtS, pct } = A;
-  const S = 400, BR = 13;                                // размер поля и радиус мяча в единицах поля
+  const S = 400, BR = 16;                                // размер поля и радиус мяча в единицах поля
   const COLORS = ["#2f8ef5", "#ff9f0a", "#34c759", "#ff375f", "#bf5af2", "#30b0c7"];
   const NAMES = ["Артём", "Лиза", "Макс", "Даша", "Тимур", "Ника", "Егор", "Соня", "Марк", "Алина"];
   let players = [], running = false, lastWinner = null;

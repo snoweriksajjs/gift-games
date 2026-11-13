@@ -16,7 +16,8 @@
   const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, K);
   const freeValue = (roll) => Math.round(30 + 270 * Math.pow(roll, 3));   // бесплатное яйцо: от 30 до 300 звёзд
   const today = () => new Date().toISOString().slice(0, 10);
-  let tier = TIERS[0], hatching = false;
+  const FRAMES = [0, 15, 40, 100];              // кадры стикера: целое, трещина, большие трещины, утёнок
+  let tier = TIERS[0], hatching = false, anim = null;
 
   const egg = () => A.state().egg || null;
   const tierOf = (id) => (id === "free" ? FREE : TIERS.find((t) => t.id === id) || TIERS[0]);
@@ -24,9 +25,12 @@
 
   function paint(t, taps) {
     const e = $("#eggArt");
-    e.style.setProperty("--e1", t.c1); e.style.setProperty("--e2", t.c2); e.style.setProperty("--es", t.spot);
+    e.style.setProperty("--e2", t.c2);
     e.dataset.taps = taps;
+    if (anim && !hatching) anim.goToAndStop(FRAMES[Math.min(taps, 2)], true);
   }
+  // проигрывает отрезок стикера: яйцо трескается или вылупляется
+  function playTo(from, to) { if (anim) { A.REDUCED ? anim.goToAndStop(to, true) : anim.playSegments([from, to], true); } }
 
   function render() {
     const st = A.state(), cur = egg(), t = cur ? tierOf(cur.tier) : tier;
@@ -70,8 +74,9 @@
     cur.taps++; A.save();
     const e = $("#eggArt");
     e.classList.remove("wob"); void e.offsetWidth; e.classList.add("wob");
-    paint(tierOf(cur.tier), cur.taps);
-    cur.taps >= TAPS ? A.hap.boom() : cur.taps === 2 ? A.hap.hit() : A.hap.stop();
+    e.dataset.taps = cur.taps;
+    if (cur.taps < TAPS) playTo(FRAMES[cur.taps - 1], FRAMES[cur.taps]);
+    A.hap.crack(cur.taps);
     $("#eggHint").textContent = cur.taps < TAPS ? `Ещё ${TAPS - cur.taps}` : "";
     if (cur.taps < TAPS) return;
 
@@ -80,7 +85,8 @@
     const t = tierOf(cur.tier), free = cur.tier === "free", round = cur.round;
     const box = $("#eggBox");
     box.classList.add("hatch");
-    await A.wait(A.REDUCED ? 100 : 650);
+    playTo(FRAMES[2], FRAMES[3]);                // скорлупа лопается, появляется утёнок
+    await A.wait(A.REDUCED ? 100 : 1150);
     const value = free ? freeValue(round.roll) : t.price * multOf(round.roll);
     const r = A.payout(value), m = free ? 1 : value / t.price;
     st.stats.eggs = (st.stats.eggs || 0) + 1;
@@ -96,6 +102,10 @@
 
   A.registerMode("egg", {
     init() {
+      if (window.lottie) A.duckData("hatch").then((data) => {
+        anim = window.lottie.loadAnimation({ container: $("#eggAnim"), renderer: "svg", loop: false, autoplay: false, animationData: JSON.parse(JSON.stringify(data)) });
+        anim.addEventListener("DOMLoaded", () => { $("#eggArt").classList.add("live"); const c = egg(); anim.goToAndStop(FRAMES[c ? Math.min(c.taps, 2) : 0], true); });
+      }).catch(() => {});
       $("#eggArt").addEventListener("click", tap);
       $("#eggTiers").addEventListener("click", (e) => {
         const b = e.target.closest("[data-tier]"); if (!b || egg()) return;

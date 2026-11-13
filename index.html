@@ -6,7 +6,7 @@
   <title>Апгрейд подарков</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <link rel="stylesheet" href="style.css?v=9" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -135,12 +135,7 @@
           <div id="arenaLabels"></div>
           <div class="a-center" id="arenaCenter" hidden></div>
           <span class="a-hit" id="arenaHit"></span>
-          <div class="a-ball" id="arenaBall" hidden><svg class="a-ball-in" viewBox="0 0 30 30" aria-hidden="true">
-            <defs><radialGradient id="ballG" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#fff" /><stop offset=".7" stop-color="#e9ecf2" /><stop offset="1" stop-color="#b9c0cc" /></radialGradient></defs>
-            <circle cx="15" cy="15" r="14" fill="url(#ballG)" />
-            <path d="M15 9.200l5.300 3.900-2 6.300h-6.600l-2-6.300z" fill="#1c1c1e" />
-            <path d="M15 9.200V2.500M20.300 13.100l6.500-2.300M18.300 19.400l4 5.400M11.700 19.400l-4 5.400M9.700 13.100l-6.500-2.300" stroke="#1c1c1e" stroke-width="1.400" fill="none" stroke-linecap="round" />
-          </svg></div>
+          <div class="a-ball" id="arenaBall" hidden><img class="a-ball-in" src="img/ball.webp" alt="" /></div>
         </div>
         <div class="slots">
           <button class="slot stake-slot">
@@ -187,18 +182,7 @@
       <!-- Яйцо -->
       <section class="mode card upgrader" id="mode-egg" hidden>
         <div class="egg-box" id="eggBox">
-          <button class="egg" id="eggArt" data-taps="0" aria-label="Разбить яйцо">
-            <svg viewBox="0 0 200 240" aria-hidden="true">
-              <defs><radialGradient id="eggG" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="var(--e1)" /><stop offset="1" stop-color="var(--e2)" /></radialGradient></defs>
-              <ellipse class="egg-shadow" cx="100" cy="228" rx="62" ry="9" />
-              <path class="egg-shell" d="M100 12C150 12 186 96 186 150c0 52-38 80-86 80s-86-28-86-80C14 96 50 12 100 12Z" fill="url(#eggG)" />
-              <g class="egg-spots"><circle cx="62" cy="120" r="11" /><circle cx="138" cy="96" r="8" /><circle cx="126" cy="172" r="13" /><circle cx="70" cy="184" r="7" /><circle cx="96" cy="62" r="6" /></g>
-              <ellipse class="egg-shine" cx="70" cy="74" rx="16" ry="26" transform="rotate(-24 70 74)" />
-              <path class="crack k1" d="M100 14l-9 22 14 12-12 20 10 14" />
-              <path class="crack k2" d="M103 82l22 10-4 18 24 8-6 20 18 12M103 82l-20 14 6 16-22 10" />
-              <path class="crack k3" d="M67 122l-18 16 12 18-20 14M139 150l-14 22 12 16-22 18M96 112l8 26-16 18 14 22" />
-            </svg>
-          </button>
+          <button class="egg" id="eggArt" data-taps="0" aria-label="Разбить яйцо"><span class="egg-halo"></span><span class="egg-anim" id="eggAnim"></span></button>
           <span class="egg-flash" aria-hidden="true"></span>
           <b id="eggName">Обычное яйцо</b>
           <span class="egg-hint" id="eggHint"></span>
@@ -238,6 +222,7 @@
       </div>
       <section class="list">
         <button class="row link" data-deposit><span class="duck " data-duck="money"></span><span class="grow">Баланс</span><b><svg class="star"><use href="#star" /></svg> <span data-balance>0</span></b><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+        <button class="row link" id="withdrawBtn"><span class="duck " data-duck="bag"></span><span class="grow">Вывод</span><b>скоро</b><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
       </section>
       <section class="kpis" id="kpis"></section>
       <section>
@@ -245,10 +230,11 @@
         <div class="card pad"><div class="grid" id="profGrid"></div></div>
       </section>
       <section class="list">
+        <label class="row"><span class="duck " data-duck="music"></span><span class="grow">Звук</span><input type="checkbox" class="sw" id="soundSw" /></label>
         <label class="row"><span class="duck " data-duck="phone"></span><span class="grow">Вибрация</span><input type="checkbox" class="sw" id="hapSw" /></label>
         <button class="row link" id="fairBtn"><span class="duck " data-duck="shield"></span><span class="grow">Честная игра</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
       </section>
-      <p class="note">18+</p>
+      <p class="note">18+ · Звуки: Google Material Design, CC BY 4.0</p>
     </main>
   </div>
 
@@ -322,19 +308,24 @@
     <div class="grab"></div>
     <header class="sheet-head"><h3>Пополнить</h3><button class="sheet-x" data-close>Закрыть</button></header>
     <div class="sheet-body">
-      <div class="dep-hero"><span class="duck xl" data-duck="money" data-loop></span></div>
+      <div class="dep-hero"><span class="duck xl" data-duck="money" data-loop></span><p>Оплата звёздами Telegram</p></div>
       <div class="packs" id="amounts">
-        <button class="pack" data-a="100"><span class="pile-s s1"><svg class="star"><use href="#star" /></svg></span><b>100</b></button>
-        <button class="pack" data-a="500"><span class="pile-s s2"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>500</b></button>
-        <button class="pack" data-a="2500"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>2 500</b></button>
-        <button class="pack" data-a="10000"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>10 000</b></button>
-        <button class="pack" data-a="50000"><span class="pile-s s4"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>50 000</b></button>
-        <button class="pack" data-a="250000"><span class="pile-s s4"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>250 000</b></button>
+        <button class="pack" data-a="10"><span class="pile-s s1"><svg class="star"><use href="#star" /></svg></span><b>10</b></button>
+        <button class="pack" data-a="50"><span class="pile-s s1"><svg class="star"><use href="#star" /></svg></span><b>50</b></button>
+        <button class="pack" data-a="100"><span class="pile-s s2"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>100</b></button>
+        <button class="pack" data-a="250"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>250</b></button>
+        <button class="pack" data-a="500"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>500</b></button>
+        <button class="pack" data-a="1000"><span class="pile-s s4"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>1 000</b></button>
       </div>
-      <div class="list in-sheet">
-        <div class="row"><span>Своя сумма</span><span class="stars-field"><svg class="star"><use href="#star" /></svg><input type="number" id="depAmount" min="10" step="1" value="1000" inputmode="numeric" aria-label="Сумма пополнения" /></span></div>
-      </div>
-      <button class="cta inline" id="depConfirm">Пополнить</button>
+    </div>
+  </section>
+
+  <section class="sheet" id="withdrawSheet" role="dialog" aria-modal="true" aria-label="Вывод" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Вывод</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-body">
+      <div class="dep-hero"><span class="duck xl" data-duck="bag" data-loop></span><p>Вывод подарков и звёзд в Telegram скоро заработает</p></div>
+      <button class="cta inline" disabled>Скоро</button>
     </div>
   </section>
 
@@ -362,14 +353,14 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=8"></script>
-  <script src="js/core.js?v=8"></script>
-  <script src="js/modes/classic.js?v=8"></script>
-  <script src="js/modes/streak.js?v=8"></script>
-  <script src="js/modes/contract.js?v=8"></script>
-  <script src="js/modes/arena.js?v=8"></script>
-  <script src="js/modes/crash.js?v=8"></script>
-  <script src="js/modes/egg.js?v=8"></script>
+  <script src="gifts.js?v=9"></script>
+  <script src="js/core.js?v=9"></script>
+  <script src="js/modes/classic.js?v=9"></script>
+  <script src="js/modes/streak.js?v=9"></script>
+  <script src="js/modes/contract.js?v=9"></script>
+  <script src="js/modes/arena.js?v=9"></script>
+  <script src="js/modes/crash.js?v=9"></script>
+  <script src="js/modes/egg.js?v=9"></script>
   <script>App.start();</script>
 </body>
 </html>
