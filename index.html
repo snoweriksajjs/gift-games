@@ -6,7 +6,7 @@
   <title>Апгрейд подарков</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=8" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -53,6 +53,7 @@
         <button data-mode="contract"><span class="duck " data-duck="wizard"></span><span>Контракт</span></button>
         <button data-mode="arena"><span class="duck " data-duck="ball"></span><span>Арена</span></button>
         <button data-mode="crash"><span class="duck " data-duck="rocket"></span><span>Краш</span></button>
+        <button data-mode="egg"><span class="duck " data-duck="hatch"></span><span>Яйцо</span></button>
       </nav>
 
       <!-- Апгрейд -->
@@ -182,6 +183,31 @@
         </div>
         <div class="list flat" id="crPlayers"></div>
       </section>
+
+      <!-- Яйцо -->
+      <section class="mode card upgrader" id="mode-egg" hidden>
+        <div class="egg-box" id="eggBox">
+          <button class="egg" id="eggArt" data-taps="0" aria-label="Разбить яйцо">
+            <svg viewBox="0 0 200 240" aria-hidden="true">
+              <defs><radialGradient id="eggG" cx="38%" cy="28%" r="80%"><stop offset="0" stop-color="var(--e1)" /><stop offset="1" stop-color="var(--e2)" /></radialGradient></defs>
+              <ellipse class="egg-shadow" cx="100" cy="228" rx="62" ry="9" />
+              <path class="egg-shell" d="M100 12C150 12 186 96 186 150c0 52-38 80-86 80s-86-28-86-80C14 96 50 12 100 12Z" fill="url(#eggG)" />
+              <g class="egg-spots"><circle cx="62" cy="120" r="11" /><circle cx="138" cy="96" r="8" /><circle cx="126" cy="172" r="13" /><circle cx="70" cy="184" r="7" /><circle cx="96" cy="62" r="6" /></g>
+              <ellipse class="egg-shine" cx="70" cy="74" rx="16" ry="26" transform="rotate(-24 70 74)" />
+              <path class="crack k1" d="M100 14l-9 22 14 12-12 20 10 14" />
+              <path class="crack k2" d="M103 82l22 10-4 18 24 8-6 20 18 12M103 82l-20 14 6 16-22 10" />
+              <path class="crack k3" d="M67 122l-18 16 12 18-20 14M139 150l-14 22 12 16-22 18M96 112l8 26-16 18 14 22" />
+            </svg>
+          </button>
+          <span class="egg-flash" aria-hidden="true"></span>
+          <b id="eggName">Обычное яйцо</b>
+          <span class="egg-hint" id="eggHint"></span>
+        </div>
+        <div class="egg-tiers" id="eggTiers"></div>
+        <div class="list flat">
+          <div class="row"><span class="duck " data-duck="hatch"></span><span class="grow">Бесплатное яйцо раз в день</span><button class="mini-btn" id="eggFree">Забрать</button></div>
+        </div>
+      </section>
     </main>
 
     <!-- ===== Задания ===== -->
@@ -246,6 +272,7 @@
       <h3 id="resTitle"></h3>
       <p id="resText"></p>
       <p class="res-extra" id="resExtra" hidden></p>
+      <button class="res-share" id="resShare">Похвастаться в сторис</button>
       <div class="res-btns">
         <button class="cta inline second" id="resSell">Продать</button>
         <button class="cta inline" id="resOk">Забрать</button>
@@ -335,13 +362,14 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=7"></script>
-  <script src="js/core.js?v=7"></script>
-  <script src="js/modes/classic.js?v=7"></script>
-  <script src="js/modes/streak.js?v=7"></script>
-  <script src="js/modes/contract.js?v=7"></script>
-  <script src="js/modes/arena.js?v=7"></script>
-  <script src="js/modes/crash.js?v=7"></script>
+  <script src="gifts.js?v=8"></script>
+  <script src="js/core.js?v=8"></script>
+  <script src="js/modes/classic.js?v=8"></script>
+  <script src="js/modes/streak.js?v=8"></script>
+  <script src="js/modes/contract.js?v=8"></script>
+  <script src="js/modes/arena.js?v=8"></script>
+  <script src="js/modes/crash.js?v=8"></script>
+  <script src="js/modes/egg.js?v=8"></script>
   <script>App.start();</script>
 </body>
 </html>

@@ -5,6 +5,7 @@
 
   const BOT_USERNAME = "IitvIn_bot";   // имя бота без @, нужно для реферальной ссылки
   const REF_BONUS = 100;               // звёзд за друга, который сделал первую игру
+  const SITE = "https://snoweriksajjs.github.io/gift-games";   // публичный адрес, нужен для карточек в сторис
   const HOUSE = 0.95;                  // доля, которая возвращается игрокам
 
   const CATALOG = window.GIFTS || [];
@@ -484,7 +485,7 @@
     const extra = $("#resExtra");
     extra.hidden = !(gift && stars);
     extra.innerHTML = `Сдача ${STAR} ${fmt(stars)} уже на балансе`;
-    resSell.hidden = !gift;
+    resSell.hidden = !gift; $("#resShare").hidden = !gift;
     if (gift) resSell.innerHTML = `Продать за ${STAR}${fmtS(gift.price)}`;
     result.hidden = false; void result.offsetWidth; result.classList.add("on");
     hap.win();
@@ -509,6 +510,20 @@
     hap.coin(); renderBalance(true); toast(`Продано за ${fmt(sum)} звёзд`);
     hidePrize();
   });
+  // выигрыш в сторис: картинка подарка лежит на сайте, ссылка ведёт в приложение
+  $("#resShare").addEventListener("click", () => {
+    const g = prize && prize.gift; if (!g) return;
+    const link = `https://t.me/${BOT_USERNAME}` + (user ? `?startapp=ref_${user.id}` : "");
+    const text = `Выиграл ${g.gift} #${g.num} за ${fmt(g.price)} звёзд`;
+    hap.soft();
+    if (inTg && tg.shareToStory) {
+      try { tg.shareToStory(`${SITE}/share/${g.id}.jpg`, { text: `${text}\n${link}`, widget_link: { url: link, name: "Играть" } }); return; } catch {}
+    }
+    if (navigator.share) navigator.share({ text, url: link }).catch(() => {});
+    else if (navigator.clipboard) navigator.clipboard.writeText(`${text} ${link}`).then(() => toast("Текст и ссылка скопированы"), () => toast("Сторис доступны в Telegram"));
+    else toast("Сторис доступны в Telegram");
+  });
+
   let missT;
   function showMiss(title, text) {
     $("#missTitle").textContent = title;
@@ -519,7 +534,7 @@
   }
 
   // ---------- история: кружки как сторис ----------
-  const MODE_DUCK = { classic: "chart", streak: "fire", contract: "wizard", arena: "ball", crash: "rocket" };
+  const MODE_DUCK = { classic: "chart", streak: "fire", contract: "wizard", arena: "ball", crash: "rocket", egg: "hatch" };
   function log(entry) {
     state.history.unshift(entry);
     state.history = state.history.slice(0, 50);
@@ -694,6 +709,7 @@
     { id: "crash3", duck: "rocket", title: "Забрать краш на ×3", reward: 250, goal: 1, get: () => (state.stats.bestCrash >= 3 ? 1 : 0) },
     { id: "contract", duck: "wizard", title: "Подписать контракт", reward: 150, goal: 1, get: () => state.stats.contracts },
     { id: "arena", duck: "ball", title: "Победить на арене", reward: 250, goal: 1, get: () => state.stats.arenaWins },
+    { id: "eggs3", duck: "hatch", title: "Разбить 3 яйца", reward: 150, goal: 3, get: () => state.stats.eggs || 0 },
     { id: "inv3", duck: "gift", title: "Собрать 3 подарка", reward: 150, goal: 3, get: () => state.inv.length },
     { id: "spins50", duck: "muscle", title: "Сыграть 50 раз", reward: 500, goal: 50, get: () => state.stats.spins },
     { id: "friend", duck: "hug", title: "Пригласить друга", reward: REF_BONUS, goal: 1, get: () => state.refs || 0 },
