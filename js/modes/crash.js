@@ -15,7 +15,7 @@
   let bots = [], stars = [], sparks = [], smoke = [], hist = [];
   let rx = 0, ry = 0;                       // где сейчас ракета
   let rider = null;                         // анимация утки на ракете
-  const RS = 96, AX = 0.25, AY = 0.76;      // размер ракеты и точка у сопла, к которой крепится линия
+  const RS = 110, AX = 0.25, AY = 0.76;      // размер ракеты и точка у сопла, к которой крепится линия
 
   function size() {
     const r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
@@ -225,7 +225,7 @@
   A.registerMode("crash", {
     init() {
       cv = $("#crashCv"); ctx = cv.getContext("2d");
-      if (window.lottie) fetch("ducks/rider.json").then((r) => r.json()).then((data) => {
+      if (window.lottie) fetch("ducks/rider.json?v=7").then((r) => r.json()).then((data) => {
         rider = window.lottie.loadAnimation({ container: $("#crRocket"), renderer: "svg", loop: true, autoplay: !A.REDUCED, animationData: data });
         if (!active) rider.pause();
       }).catch(() => {});

@@ -6,7 +6,7 @@
   <title>Апгрейд подарков</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=7" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -124,12 +124,16 @@
       <section class="mode card upgrader" id="mode-arena" hidden>
         <div class="arena" id="arenaField">
           <svg viewBox="0 0 400 400" aria-hidden="true">
-            <g id="arenaSectors"></g>
-            <circle cx="200" cy="200" r="180" class="a-rim" />
-            <polyline id="arenaTrail" class="a-trail" points="" />
+            <defs><clipPath id="aClip"><rect width="400" height="400" rx="20" /></clipPath></defs>
+            <g clip-path="url(#aClip)">
+              <g id="arenaSectors"></g>
+              <g id="arenaTrail" class="a-trail"></g>
+            </g>
+            <rect x="1.5" y="1.5" width="397" height="397" rx="19" class="a-rim" />
           </svg>
           <div id="arenaLabels"></div>
           <div class="a-center" id="arenaCenter" hidden></div>
+          <span class="a-hit" id="arenaHit"></span>
           <div class="a-ball" id="arenaBall" hidden><svg class="a-ball-in" viewBox="0 0 30 30" aria-hidden="true">
             <defs><radialGradient id="ballG" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#fff" /><stop offset=".7" stop-color="#e9ecf2" /><stop offset="1" stop-color="#b9c0cc" /></radialGradient></defs>
             <circle cx="15" cy="15" r="14" fill="url(#ballG)" />
@@ -151,7 +155,7 @@
           </div>
         </div>
         <div class="list flat" id="arenaList"></div>
-        <p class="rule">Чем больше ставка, тем больше ваш сектор. Где остановится мяч, тот и забирает банк.</p>
+        <p class="rule">Чем больше ставка, тем больше ваша территория. На чьей территории остановится мяч, тот забирает банк.</p>
       </section>
 
       <!-- Краш -->
@@ -331,13 +335,13 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js"></script>
-  <script src="js/core.js"></script>
-  <script src="js/modes/classic.js"></script>
-  <script src="js/modes/streak.js"></script>
-  <script src="js/modes/contract.js"></script>
-  <script src="js/modes/arena.js"></script>
-  <script src="js/modes/crash.js"></script>
+  <script src="gifts.js?v=7"></script>
+  <script src="js/core.js?v=7"></script>
+  <script src="js/modes/classic.js?v=7"></script>
+  <script src="js/modes/streak.js?v=7"></script>
+  <script src="js/modes/contract.js?v=7"></script>
+  <script src="js/modes/arena.js?v=7"></script>
+  <script src="js/modes/crash.js?v=7"></script>
   <script>App.start();</script>
 </body>
 </html>

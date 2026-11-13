@@ -447,14 +447,13 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 @keyframes ctPulse { 50% { transform: scale(1.18); box-shadow: 0 0 0 14px color-mix(in srgb, var(--btn) 22%, transparent); } }
 
 /* ================= арена ================= */
-.arena { position: relative; width: min(300px, 78vw); aspect-ratio: 1; margin: 0 auto; }
+.arena { position: relative; width: min(320px, 84vw); aspect-ratio: 1; margin: 0 auto; }
 .arena svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .a-empty { fill: var(--fill); }
-.a-rim { fill: none; stroke: var(--card); stroke-width: 4; }
-.a-sec { stroke: var(--card); stroke-width: 3; stroke-linejoin: round; transition: opacity .4s; }
+.a-rim { fill: none; stroke: rgba(0, 0, 0, .12); stroke-width: 3; }
+.a-sec { stroke: var(--card); stroke-width: 4; transition: opacity .4s, filter .25s; }
 .a-sec.dim { opacity: .28; }
-.a-trail { fill: none; stroke: #fff; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 5 9; opacity: 0; transition: opacity .3s; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .35)); }
-.a-trail.on { opacity: .9; }
+.a-trail circle { fill: #fff; }
 .a-lab { position: absolute; transform: translate(-50%, -50%); display: grid; justify-items: center; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .4); pointer-events: none; line-height: 1.15; }
 .a-lab b { font-size: 15px; }
 .a-lab i { font-style: normal; font-size: 12px; opacity: .9; font-variant-numeric: tabular-nums; }
@@ -463,9 +462,8 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .a-ball { position: absolute; left: 0; top: 0; width: 30px; height: 30px; will-change: transform; filter: drop-shadow(0 4px 5px rgba(0, 0, 0, .4)); }
 .a-ball[hidden] { display: none; }
 .a-ball-in { display: block; width: 100%; height: 100%; }
-.a-sec.hot { filter: brightness(1.25); }
+.a-sec.hot { filter: brightness(1.22) saturate(1.1); }
 .row.a-hot { background: var(--fill-2); }
-.a-trail.fade { opacity: .3; }
 .list.flat { background: var(--fill); }
 .a-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
 .tag { font-style: normal; font-size: 11px; color: var(--hint); background: var(--fill-2); border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
@@ -481,7 +479,7 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .crash { position: relative; height: 250px; border-radius: 18px; overflow: hidden; color: #fff;
   background: radial-gradient(120% 90% at 85% 10%, #3b2a7a, transparent 60%), linear-gradient(#0d1030, #1a1446 60%, #2a1a52); }
 .crash canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.rocket { position: absolute; left: 0; top: 0; width: 96px; height: 96px; will-change: transform; transform-origin: 25% 76%; transition: opacity .25s; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, .45)); pointer-events: none; }
+.rocket { position: absolute; left: 0; top: 0; width: 110px; height: 110px; will-change: transform; transform-origin: 25% 76%; transition: opacity .25s; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, .45)); pointer-events: none; }
 .rocket svg { display: block; }
 .rocket.gone { opacity: 0; }
 .crash-read { position: absolute; left: 0; right: 0; top: 16px; display: grid; justify-items: center; gap: 2px; pointer-events: none; }
@@ -516,3 +514,18 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .sheet-head h3 .hint { font-weight: 400; }
 
 .chip .pat, .gift .pat { -webkit-mask-size: 22% auto; mask-size: 22% auto; }
+
+/* арена: квадратное поле */
+.a-lab.idle b { font-size: 16px; }
+.a-lab.idle { color: var(--hint); text-shadow: none; }
+.a-lab.idle i { white-space: nowrap; }
+.a-sec.win { animation: winTerr 1.2s ease 2; }
+@keyframes winTerr { 50% { filter: brightness(1.35); } }
+.a-ball { transition: none; }
+.a-ball.drop { animation: ballDrop .52s cubic-bezier(.3, 1.6, .5, 1) forwards; }
+@keyframes ballDrop { from { opacity: 0; } to { opacity: 1; } }
+.a-ball.drop .a-ball-in { animation: dropIn .52s cubic-bezier(.3, 1.6, .5, 1) both; }
+@keyframes dropIn { from { transform: scale(3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.a-hit { position: absolute; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%; border: 3px solid #fff; opacity: 0; pointer-events: none; }
+.a-hit.on { animation: hitRing .9s ease-out; }
+@keyframes hitRing { from { transform: scale(.2); opacity: .9; } to { transform: scale(2.2); opacity: 0; } }
