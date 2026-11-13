@@ -481,12 +481,9 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .crash { position: relative; height: 250px; border-radius: 18px; overflow: hidden; color: #fff;
   background: radial-gradient(120% 90% at 85% 10%, #3b2a7a, transparent 60%), linear-gradient(#0d1030, #1a1446 60%, #2a1a52); }
 .crash canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.rocket { position: absolute; left: 0; top: 0; width: 46px; height: 46px; will-change: transform; opacity: 0; transition: opacity .2s; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .45)); }
-.crash.fly .rocket { opacity: 1; }
-.rocket.gone { opacity: 0 !important; }
-.rocket .flame { transform-box: fill-box; transform-origin: 50% 0; animation: flame .12s ease-in-out infinite alternate; }
-.rocket .flame.in { animation-duration: .09s; }
-@keyframes flame { from { transform: scaleY(.75); } to { transform: scaleY(1.2); } }
+.rocket { position: absolute; left: 0; top: 0; width: 96px; height: 96px; will-change: transform; transform-origin: 25% 76%; transition: opacity .25s; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, .45)); pointer-events: none; }
+.rocket svg { display: block; }
+.rocket.gone { opacity: 0; }
 .crash-read { position: absolute; left: 0; right: 0; top: 16px; display: grid; justify-items: center; gap: 2px; pointer-events: none; }
 .crash-read b { font-size: 46px; font-weight: 700; letter-spacing: -1.5px; line-height: 1; font-variant-numeric: tabular-nums; text-shadow: 0 2px 14px rgba(0, 0, 0, .4); }
 .crash-read span { font-size: 13px; color: rgba(255, 255, 255, .7); }

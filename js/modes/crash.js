@@ -12,8 +12,10 @@
   let cv, ctx, W = 0, H = 0, raf = 0, active = false;
   let phase = "bet", phaseT = 0, round = null, cp = 1, m = 1, frameN = 0, lastNowId = null;
   let my = null;                            // { bet, cashed }
-  let bots = [], stars = [], sparks = [], hist = [];
+  let bots = [], stars = [], sparks = [], smoke = [], hist = [];
   let rx = 0, ry = 0;                       // где сейчас ракета
+  let rider = null;                         // анимация утки на ракете
+  const RS = 96, AX = 0.25, AY = 0.76;      // размер ракеты и точка у сопла, к которой крепится линия
 
   function size() {
     const r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
@@ -36,30 +38,55 @@
       const len = flying ? Math.min(14, s.z * (1 + m * 0.5)) : 0;
       if (len > 2) { ctx.fillRect(s.x * W, s.y * H, len, s.z * 0.6); } else { ctx.beginPath(); ctx.arc(s.x * W, s.y * H, s.z * 0.55, 0, 7); ctx.fill(); }
     }
-    if (phase === "bet") return;
+    const x0 = 22, y0 = H - 22, x1 = W * 0.7, y1 = H * 0.5;
+    if (phase === "bet") { placeRocket(x0 + 6, y0 - 4, 18); return; }
     // кривая полёта: ракета доходит до правого верхнего угла и дальше остаётся там, кривая сжимается
     const t = Math.log(m) / SPEED, tMax = Math.max(8, t), mMax = Math.max(2, m);
-    const x0 = 18, y0 = H - 18, x1 = W * 0.8, y1 = H * 0.3;
     const px = (tt) => x0 + (tt / tMax) * (x1 - x0), py = (mm) => y0 - ((mm - 1) / (mMax - 1)) * (y0 - y1);
-    const color = crashed ? "#ff5b6b" : "#5df2a6";
-    ctx.beginPath(); ctx.moveTo(px(0), py(1));
-    const N = 40;
-    for (let i = 1; i <= N; i++) { const tt = (t * i) / N; ctx.lineTo(px(tt), py(Math.exp(SPEED * tt))); }
-    ctx.lineWidth = 4; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.strokeStyle = color;
-    ctx.shadowColor = color; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0;
-    ctx.lineTo(px(t), y0); ctx.lineTo(x0, y0); ctx.closePath();
-    const g = ctx.createLinearGradient(0, y1, 0, y0);
-    g.addColorStop(0, crashed ? "rgba(255,91,107,.28)" : "rgba(93,242,166,.3)"); g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g; ctx.fill();
-    // метки ботов, которые уже забрали
+    const pts = [];
+    const N = 48;
+    for (let i = 0; i <= N; i++) { const tt = (t * i) / N; pts.push([px(tt), py(Math.exp(SPEED * tt))]); }
+    rx = pts[N][0]; ry = pts[N][1];
+    const [r1, g1, b1] = crashed ? [255, 91, 107] : [93, 242, 166];
+    const path = () => { ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i <= N; i++) ctx.lineTo(pts[i][0], pts[i][1]); };
+    // заливка под линией
+    path(); ctx.lineTo(rx, y0); ctx.lineTo(x0, y0); ctx.closePath();
+    const fg = ctx.createLinearGradient(0, ry, 0, y0);
+    fg.addColorStop(0, `rgba(${r1},${g1},${b1},.16)`); fg.addColorStop(1, `rgba(${r1},${g1},${b1},0)`);
+    ctx.fillStyle = fg; ctx.fill();
+    // линия: от прозрачного хвоста к яркому носу, мягкое свечение под ней
+    const lg = ctx.createLinearGradient(x0, y0, rx, ry);
+    lg.addColorStop(0, `rgba(${r1},${g1},${b1},.08)`); lg.addColorStop(0.55, `rgba(${r1},${g1},${b1},.75)`); lg.addColorStop(1, `rgb(${Math.min(255, r1 + 90)},${Math.min(255, g1 + 13)},${Math.min(255, b1 + 60)})`);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    path(); ctx.lineWidth = 12; ctx.strokeStyle = `rgba(${r1},${g1},${b1},.14)`; ctx.stroke();
+    path(); ctx.lineWidth = 4.5; ctx.strokeStyle = lg; ctx.stroke();
+    // метки игроков, которые уже забрали
     for (const b of bots) {
-      if (!b.cashed) continue;
+      if (!b.cashed || b.cashed > m) continue;
       const bx = px(Math.log(b.cashed) / SPEED), by = py(b.cashed);
-      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(bx, by, 3.5, 0, 7); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.beginPath(); ctx.arc(bx, by, 3.5, 0, 7); ctx.fill();
     }
-    rx = px(t); ry = py(m);
-    const t2 = Math.max(0, t - 0.25), ang = Math.atan2(py(Math.exp(SPEED * t2)) - ry, rx - px(t2));
-    if (!crashed) $("#crRocket").style.transform = `translate(${rx - 23}px, ${ry - 23}px) rotate(${(45 - (ang * 180) / Math.PI).toFixed(1)}deg)`;
+    if (!crashed) {
+      // свечение у сопла
+      const hg = ctx.createRadialGradient(rx, ry, 0, rx, ry, 26);
+      hg.addColorStop(0, "rgba(255,214,120,.55)"); hg.addColorStop(1, "rgba(255,214,120,0)");
+      ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(rx, ry, 26, 0, 7); ctx.fill();
+      const back = pts[Math.max(0, N - 12)], ang = Math.atan2(back[1] - ry, rx - back[0]);
+      placeRocket(rx, ry, Math.max(4, Math.min(30, (ang * 180) / Math.PI * 0.7)));
+      // выхлоп: искры летят назад от сопла
+      if (flying && smoke.length < 70) for (let k = 0; k < 2; k++) {
+        // направление полёта на экране (cos, -sin), выхлоп летит в обратную сторону с разбросом
+        const a = ang + (Math.random() - 0.5) * 0.7, sp = 0.6 + Math.random() * 1.6;
+        smoke.push({ x: rx, y: ry, vx: -Math.cos(a) * sp, vy: Math.sin(a) * sp, s: 1.2 + Math.random() * 2.2, life: 1,
+          c: ["#ffe27a", "#ffb347", "#ff8a3d", "#ffffff"][(Math.random() * 4) | 0] });
+      }
+    }
+    for (const p of smoke) {
+      p.x += p.vx; p.y += p.vy; p.life -= 0.035; p.s *= 0.985;
+      if (p.life <= 0) continue;
+      ctx.globalAlpha = p.life * 0.9; ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1; smoke = smoke.filter((p) => p.life > 0);
     // осколки после взрыва
     if (sparks.length) {
       for (const p of sparks) {
@@ -69,6 +96,11 @@
       }
       ctx.globalAlpha = 1; sparks = sparks.filter((p) => p.life > 0);
     }
+  }
+
+  // ракета крепится соплом к концу линии и смотрит по направлению полёта
+  function placeRocket(x, y, deg) {
+    $("#crRocket").style.transform = `translate(${(x - RS * AX).toFixed(1)}px, ${(y - RS * AY).toFixed(1)}px) rotate(${(-deg + 6).toFixed(1)}deg)`;
   }
 
   // ---------- списки ----------
@@ -107,7 +139,7 @@
 
   // ---------- фазы ----------
   function newRound(now) {
-    phase = "bet"; phaseT = now; m = 1; my = null; lastNowId = null; sparks = [];
+    phase = "bet"; phaseT = now; m = 1; my = null; lastNowId = null; sparks = []; smoke = [];
     round = A.nextRound(); cp = crashPoint(round.roll);
     const n = 3 + Math.floor(Math.random() * 4), pool = [...NAMES].sort(() => Math.random() - 0.5);
     bots = Array.from({ length: n }, (_, i) => ({
@@ -193,6 +225,10 @@
   A.registerMode("crash", {
     init() {
       cv = $("#crashCv"); ctx = cv.getContext("2d");
+      if (window.lottie) fetch("ducks/rider.json").then((r) => r.json()).then((data) => {
+        rider = window.lottie.loadAnimation({ container: $("#crRocket"), renderer: "svg", loop: true, autoplay: !A.REDUCED, animationData: data });
+        if (!active) rider.pause();
+      }).catch(() => {});
       hist = (A.state().crashHist || []).slice(0, 12);
       addEventListener("resize", () => { if (active) size(); });
     },
@@ -200,8 +236,9 @@
       active = true; size(); renderHist();
       if (!round || phase === "end" || (phase === "fly" && !my)) newRound(performance.now()); else { phaseT = performance.now() - (phase === "bet" ? 0 : (Math.log(m) / SPEED) * 1000); setCta(); }
       cancelAnimationFrame(raf); raf = requestAnimationFrame(frame);
+      if (rider && !A.REDUCED) rider.play();
     },
-    leave() { active = false; cancelAnimationFrame(raf); },
+    leave() { active = false; cancelAnimationFrame(raf); if (rider) rider.pause(); },
     onStake() { if (active) setCta(); },
     lockStake() { return !!(my && !my.cashed && phase !== "end"); },
     crashPoint,
