@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "skinrise",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "cd \"/Users/mac/Desktop/Проекты/first startapp\" && python3 -m http.server 8080"],
+      "port": 8080
+    }
+  ]
+}

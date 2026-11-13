@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Апгрейд подарков</title>
+  <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
+  <link rel="preconnect" href="https://cdn.changes.tg" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="starGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#ffd84d" /><stop offset="1" stop-color="#f7931a" />
+      </linearGradient>
+      <symbol id="star" viewBox="0 0 24 24">
+        <path fill="url(#starGrad)" stroke="url(#starGrad)" stroke-width="2.2" stroke-linejoin="round" d="M12 3.6l2.5 5.4 5.9.7-4.4 4 1.2 5.8L12 16.6l-5.2 2.9L8 13.7l-4.4-4 5.9-.7z" />
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="splash" id="splash" aria-hidden="true">
+    <span class="duck splash-duck" data-duck="hi"></span>
+    <div class="splash-bar"><i></i></div>
+  </div>
+
+  <div class="app">
+    <!-- ===== Игры ===== -->
+    <main class="page on" id="pageUp">
+      <header class="bar">
+        <div class="me">
+          <div class="ava" data-ava>Г</div>
+          <div class="me-text">
+            <div class="me-name" data-name>Гость</div>
+            <div class="me-sub">Игры на подарки</div>
+          </div>
+        </div>
+        <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
+          <svg class="star"><use href="#star" /></svg><b data-balance>0</b><span class="plus" aria-hidden="true">+</span>
+        </button>
+      </header>
+
+      <section class="stories" id="feed" hidden>
+        <div class="stories-row" id="hist"></div>
+      </section>
+
+      <nav class="modes" id="modes" aria-label="Режим игры">
+        <button data-mode="classic" class="on"><span class="duck " data-duck="chart"></span><span>Апгрейд</span></button>
+        <button data-mode="streak"><span class="duck " data-duck="fire"></span><span>Серия</span></button>
+        <button data-mode="contract"><span class="duck " data-duck="wizard"></span><span>Контракт</span></button>
+        <button data-mode="arena"><span class="duck " data-duck="ball"></span><span>Арена</span></button>
+        <button data-mode="crash"><span class="duck " data-duck="rocket"></span><span>Краш</span></button>
+      </nav>
+
+      <!-- Апгрейд -->
+      <section class="mode card upgrader" id="mode-classic">
+        <div id="dialClassic"></div>
+        <div class="stats">
+          <div class="stat"><span class="duck " data-duck="chart"></span><span class="stat-l">Множитель</span><b id="multVal">×0</b></div>
+          <div class="stat"><span class="duck " data-duck="money"></span><span class="stat-l">Выигрыш</span><b id="winVal">0</b></div>
+          <label class="stat toggle"><span class="duck " data-duck="rocket"></span><span class="stat-l">Быстро</span><b data-fast-label>Выкл</b><input type="checkbox" data-fast aria-label="Быстрая прокрутка" /></label>
+        </div>
+        <div class="slots">
+          <button class="slot stake-slot">
+            <span class="slot-label">Ставка</span>
+            <span class="slot-body" data-stake-body></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b data-stake-sum>0</b></span>
+          </button>
+          <svg class="flow" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" /></svg>
+          <button class="slot" id="outSlot">
+            <span class="slot-label" id="outLabel">Цель</span>
+            <span class="slot-body" id="outBody"></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b id="outSum">0</b></span>
+          </button>
+        </div>
+        <div class="mults" id="mults" role="group" aria-label="Подобрать цель по множителю">
+          <button data-m="1.5">×1.5</button><button data-m="2">×2</button><button data-m="3">×3</button>
+          <button data-m="5">×5</button><button data-m="10">×10</button><button data-m="20">×20</button>
+        </div>
+      </section>
+
+      <!-- Серия -->
+      <section class="mode card upgrader" id="mode-streak" hidden>
+        <div id="dialStreak"></div>
+        <div class="ladder" id="ladder"></div>
+        <div class="stats">
+          <div class="stat"><span class="duck" data-duck="fire" id="streakDuck"></span><span class="stat-l">Побед подряд</span><b id="streakCount">0</b></div>
+          <div class="stat"><span class="duck " data-duck="star"></span><span class="stat-l">За победу</span><b>×2</b></div>
+          <label class="stat toggle"><span class="duck " data-duck="rocket"></span><span class="stat-l">Быстро</span><b data-fast-label>Выкл</b><input type="checkbox" data-fast aria-label="Быстрая прокрутка" /></label>
+        </div>
+        <div class="slots">
+          <button class="slot stake-slot">
+            <span class="slot-label">Ставка</span>
+            <span class="slot-body" data-stake-body></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b data-stake-sum>0</b></span>
+          </button>
+          <svg class="flow" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" /></svg>
+          <div class="slot">
+            <span class="slot-label">Приз</span>
+            <span class="slot-body" id="bankBody"></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b id="bankSum">0</b></span>
+          </div>
+        </div>
+        <p class="rule">Одна ставка. Круг крутится сам до первого промаха. Каждая победа удваивает приз.</p>
+      </section>
+
+      <!-- Контракт -->
+      <section class="mode card upgrader" id="mode-contract" hidden>
+        <button class="ct-board" id="ctBoard" aria-label="Выбрать подарки для контракта">
+          <span id="ctCells"></span>
+          <span class="ct-core"><span class="duck xl" data-duck="wizard" data-loop id="ctDuck"></span></span>
+        </button>
+        <div class="stats two">
+          <div class="stat"><span class="duck " data-duck="gift"></span><span class="stat-l">Вы отдаёте</span><b id="ctSum">0</b></div>
+          <div class="stat"><span class="duck " data-duck="sparkle"></span><span class="stat-l">Получите</span><b id="ctRange">от ×0,3 до ×3</b></div>
+        </div>
+        <p class="rule">От 3 до 10 подарков меняются на один случайный. Разницу в цене вернём звёздами.</p>
+      </section>
+
+      <!-- Арена -->
+      <section class="mode card upgrader" id="mode-arena" hidden>
+        <div class="arena" id="arenaField">
+          <svg viewBox="0 0 400 400" aria-hidden="true">
+            <g id="arenaSectors"></g>
+            <circle cx="200" cy="200" r="180" class="a-rim" />
+            <polyline id="arenaTrail" class="a-trail" points="" />
+          </svg>
+          <div id="arenaLabels"></div>
+          <div class="a-center" id="arenaCenter" hidden></div>
+          <div class="a-ball" id="arenaBall" hidden><svg class="a-ball-in" viewBox="0 0 30 30" aria-hidden="true">
+            <defs><radialGradient id="ballG" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#fff" /><stop offset=".7" stop-color="#e9ecf2" /><stop offset="1" stop-color="#b9c0cc" /></radialGradient></defs>
+            <circle cx="15" cy="15" r="14" fill="url(#ballG)" />
+            <path d="M15 9.200l5.300 3.900-2 6.300h-6.600l-2-6.300z" fill="#1c1c1e" />
+            <path d="M15 9.200V2.500M20.300 13.100l6.500-2.300M18.300 19.400l4 5.400M11.700 19.400l-4 5.400M9.700 13.100l-6.500-2.300" stroke="#1c1c1e" stroke-width="1.400" fill="none" stroke-linecap="round" />
+          </svg></div>
+        </div>
+        <div class="slots">
+          <button class="slot stake-slot">
+            <span class="slot-label">Ставка</span>
+            <span class="slot-body" data-stake-body></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b data-stake-sum>0</b></span>
+          </button>
+          <svg class="flow" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" /></svg>
+          <div class="slot">
+            <span class="slot-label">Банк</span>
+            <span class="slot-body"><span class="duck lg" data-duck="trophy"></span></span>
+            <span class="slot-sum"><b id="arenaPot">0</b></span>
+          </div>
+        </div>
+        <div class="list flat" id="arenaList"></div>
+        <p class="rule">Чем больше ставка, тем больше ваш сектор. Где остановится мяч, тот и забирает банк.</p>
+      </section>
+
+      <!-- Краш -->
+      <section class="mode card upgrader" id="mode-crash" hidden>
+        <div class="cr-hist" id="crHist"></div>
+        <div class="crash" id="crashBox">
+          <canvas id="crashCv"></canvas>
+          <div class="rocket" id="crRocket" aria-hidden="true">
+            <svg viewBox="0 0 46 46">
+              <g transform="rotate(45 23 23)">
+                <path class="flame" d="M18.500 33c0 5 2.500 8.500 4.500 12 2-3.500 4.500-7 4.500-12z" fill="#ff9a2e" />
+                <path class="flame in" d="M20.500 33c0 3 1.300 5 2.500 7 1.200-2 2.500-4 2.500-7z" fill="#ffe27a" />
+                <path d="M14 30l-5 6 7-2zM32 30l5 6-7-2z" fill="#ff4d5e" />
+                <path d="M23 3c6 5 8 12 8 19v11H15V22c0-7 2-14 8-19z" fill="#f4f6fb" />
+                <path d="M23 3c2.800 2.300 4.700 5.200 6 8.500H17c1.300-3.300 3.200-6.200 6-8.500z" fill="#ff4d5e" />
+                <circle cx="23" cy="19" r="4.200" fill="#2f8ef5" stroke="#cfd6e4" stroke-width="1.500" />
+              </g>
+            </svg>
+          </div>
+          <div class="crash-read"><b id="crashMult">×1,00</b><span id="crashNote">Старт через 6</span></div>
+        </div>
+        <div class="cr-now" id="crNow"><span id="crNowBody"></span><span id="crNowText">Поставьте, пока идёт приём ставок</span></div>
+        <div class="slots">
+          <button class="slot stake-slot">
+            <span class="slot-label">Ставка</span>
+            <span class="slot-body" data-stake-body></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b data-stake-sum>0</b></span>
+          </button>
+          <svg class="flow" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" /></svg>
+          <label class="slot">
+            <span class="slot-label">Автовывод</span>
+            <span class="slot-body"><input class="auto-in" type="number" id="crashAuto" min="1.01" step="0.1" placeholder="×2,00" inputmode="decimal" aria-label="Забрать автоматически на множителе" /></span>
+            <span class="slot-sum hint">по желанию</span>
+          </label>
+        </div>
+        <div class="list flat" id="crPlayers"></div>
+      </section>
+    </main>
+
+    <!-- ===== Задания ===== -->
+    <main class="page" id="pageTasks" hidden>
+      <div class="hero"><span class="duck xl" data-duck="game" data-loop></span><h1>Задания</h1><p>Выполняйте и забирайте звёзды</p></div>
+      <section class="list" id="taskList"></section>
+    </main>
+
+    <!-- ===== Друзья ===== -->
+    <main class="page" id="pageFriends" hidden>
+      <div class="hero"><span class="duck xl" data-duck="hug" data-loop></span><h1>Друзья</h1><p id="refTerms"></p></div>
+      <section class="pair">
+        <div class="card kpi"><b id="refCount">0</b><span>приглашено</span></div>
+        <div class="card kpi"><b><span id="refEarned">0</span> <svg class="star"><use href="#star" /></svg></b><span>заработано</span></div>
+      </section>
+      <section class="list">
+        <div class="row"><span class="ref-link" id="refLink"></span><button class="mini-btn" id="refCopy">Копировать</button></div>
+      </section>
+      <button class="cta inline" id="refShare">Пригласить друга</button>
+    </main>
+
+    <!-- ===== Профиль ===== -->
+    <main class="page" id="pageProfile" hidden>
+      <div class="hero">
+        <div class="ava xl" data-ava>Г</div>
+        <h1 data-name>Гость</h1>
+        <p id="meHandle"></p>
+      </div>
+      <section class="list">
+        <button class="row link" data-deposit><span class="duck " data-duck="money"></span><span class="grow">Баланс</span><b><svg class="star"><use href="#star" /></svg> <span data-balance>0</span></b><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+      </section>
+      <section class="kpis" id="kpis"></section>
+      <section>
+        <h2 class="sec-title">Мои подарки <span id="profCount"></span></h2>
+        <div class="card pad"><div class="grid" id="profGrid"></div></div>
+      </section>
+      <section class="list">
+        <label class="row"><span class="duck " data-duck="phone"></span><span class="grow">Вибрация</span><input type="checkbox" class="sw" id="hapSw" /></label>
+        <button class="row link" id="fairBtn"><span class="duck " data-duck="shield"></span><span class="grow">Честная игра</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+      </section>
+      <p class="note">18+</p>
+    </main>
+  </div>
+
+  <div class="cta-bar" id="ctaBar">
+    <button class="cta second" id="cta2" hidden></button>
+    <button class="cta" id="cta" disabled>Выберите ставку</button>
+  </div>
+
+  <nav class="tabs" id="tabs" aria-label="Разделы">
+    <button class="tab on" data-tab="pageUp"><span class="duck " data-duck="game"></span><span>Игры</span></button>
+    <button class="tab" data-tab="pageTasks"><span class="duck " data-duck="star"></span><span>Задания</span><i class="dot" id="taskDot" hidden></i></button>
+    <button class="tab" data-tab="pageFriends"><span class="duck " data-duck="hug"></span><span>Друзья</span></button>
+    <button class="tab" data-tab="pageProfile"><span class="duck " data-duck="user"></span><span>Профиль</span></button>
+  </nav>
+
+  <!-- окно выигрыша и плашка проигрыша -->
+  <div class="result" id="result" hidden>
+    <div class="res-card">
+      <div class="grab"></div>
+      <div class="res-art" id="resGift"></div>
+      <h3 id="resTitle"></h3>
+      <p id="resText"></p>
+      <p class="res-extra" id="resExtra" hidden></p>
+      <div class="res-btns">
+        <button class="cta inline second" id="resSell">Продать</button>
+        <button class="cta inline" id="resOk">Забрать</button>
+      </div>
+    </div>
+  </div>
+  <div class="miss" id="miss" role="status"><span class="duck lg" data-duck="cry"></span><div><b id="missTitle">Не выпало</b><span id="missText"></span></div></div>
+
+  <!-- шторки -->
+  <div class="scrim" id="scrim" hidden></div>
+
+  <section class="sheet" id="stakeSheet" role="dialog" aria-modal="true" aria-label="Ставка" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Ставка</h3><button class="sheet-x" data-close>Готово</button></header>
+    <div class="sheet-body">
+      <div class="list in-sheet stars-rows">
+        <div class="row">
+          <span>Звёзды</span>
+          <span class="stars-field"><svg class="star"><use href="#star" /></svg><input type="number" id="balInput" min="0" step="1" value="0" inputmode="numeric" aria-label="Звёзды с баланса" /></span>
+        </div>
+        <div class="row quick"><button data-bal="half">Половина</button><button data-bal="max">Всё</button><button data-bal="zero">Сбросить</button></div>
+      </div>
+      <h4 class="sec-title">Мои подарки <span id="invCount"></span></h4>
+      <div class="grid" id="invGrid"></div>
+    </div>
+    <footer class="sheet-foot"><button class="danger-btn" id="sellSelBtn">Продать выбранные</button></footer>
+  </section>
+
+  <section class="sheet tall" id="targetSheet" role="dialog" aria-modal="true" aria-label="Цель" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Цель</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-tools">
+      <input type="search" id="shopSearch" placeholder="Поиск" aria-label="Поиск подарка" />
+      <select id="shopSort" aria-label="Сортировка"><option value="asc">Дешевле</option><option value="desc">Дороже</option></select>
+    </div>
+    <div class="seg" id="priceSeg" role="group" aria-label="Цена в звёздах">
+      <button data-r="all" class="on">Все</button>
+      <button data-r="0-1000">до 1K</button>
+      <button data-r="1000-10000">1K–10K</button>
+      <button data-r="10000-100000">10K–100K</button>
+      <button data-r="100000-">от 100K</button>
+    </div>
+    <div class="sheet-body"><div class="grid" id="shopGrid"></div></div>
+  </section>
+
+  <section class="sheet" id="depositSheet" role="dialog" aria-modal="true" aria-label="Пополнение" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Пополнить</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-body">
+      <div class="dep-hero"><span class="duck xl" data-duck="money" data-loop></span></div>
+      <div class="packs" id="amounts">
+        <button class="pack" data-a="100"><span class="pile-s s1"><svg class="star"><use href="#star" /></svg></span><b>100</b></button>
+        <button class="pack" data-a="500"><span class="pile-s s2"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>500</b></button>
+        <button class="pack" data-a="2500"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>2 500</b></button>
+        <button class="pack" data-a="10000"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>10 000</b></button>
+        <button class="pack" data-a="50000"><span class="pile-s s4"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>50 000</b></button>
+        <button class="pack" data-a="250000"><span class="pile-s s4"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>250 000</b></button>
+      </div>
+      <div class="list in-sheet">
+        <div class="row"><span>Своя сумма</span><span class="stars-field"><svg class="star"><use href="#star" /></svg><input type="number" id="depAmount" min="10" step="1" value="1000" inputmode="numeric" aria-label="Сумма пополнения" /></span></div>
+      </div>
+      <button class="cta inline" id="depConfirm">Пополнить</button>
+    </div>
+  </section>
+
+  <section class="sheet" id="fairSheet" role="dialog" aria-modal="true" aria-label="Честная игра" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Честная игра</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-body">
+      <div class="verify" id="verifyBox" hidden></div>
+      <p class="sheet-text">Число раунда считается заранее из серверного сида, вашего сида и номера раунда. До игры виден только хэш серверного сида. После игры сид открывается, и результат можно пересчитать.</p>
+      <label class="field">Хэш сида следующего раунда<code id="fairHash"></code></label>
+      <label class="field">Ваш сид<input type="text" id="clientSeed" maxlength="64" /></label>
+      <label class="field">Номер следующего раунда<code id="fairNonce">0</code></label>
+    </div>
+  </section>
+
+  <section class="sheet" id="giftSheet" role="dialog" aria-modal="true" aria-label="Подарок" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3><span id="gcName"></span> <span class="hint" id="gcNum"></span></h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-body">
+      <div class="gc-art" id="gcArt"></div>
+      <div class="list in-sheet" id="gcTable"></div>
+      <button class="cta inline second" id="gcSell">Продать</button>
+    </div>
+  </section>
+
+  <canvas class="fx" id="fx" aria-hidden="true"></canvas>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="gifts.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/modes/classic.js"></script>
+  <script src="js/modes/streak.js"></script>
+  <script src="js/modes/contract.js"></script>
+  <script src="js/modes/arena.js"></script>
+  <script src="js/modes/crash.js"></script>
+  <script>App.start();</script>
+</body>
+</html>
