@@ -1224,6 +1224,20 @@
       call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; paintHandle(); if (r.pending) claimIncoming(); }).catch(() => {});
     }, force ? 0 : 1200);
   }
+  // реферальный баннер: сервер рисует анимацию, Telegram даёт выбрать чат
+  let sharing = false;
+  A.shareRef = () => {
+    if (!canUse || !inTg || !tg.shareMessage) return false;
+    if (sharing) return true;
+    sharing = true;
+    const btn = $("#refShare"), was = btn.textContent;
+    btn.disabled = true; btn.innerHTML = `<span class="spin"></span>`;
+    call("POST", "/api/ref/share", {})
+      .then((r) => tg.shareMessage(r.id, (ok) => { if (ok) { hap.win(); toast("Приглашение отправлено"); } }))
+      .catch(() => { const link = `https://t.me/${A.BOT_USERNAME}?start=ref_${myId}`; try { tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Залетай в DuckChance: выбивай NFT-подарки Telegram")}`); } catch {} })
+      .finally(() => { sharing = false; btn.disabled = false; btn.textContent = was; });
+    return true;
+  };
   A.onLook = () => syncMe(false);
   setInterval(() => syncMe(false), 30000);                                   // баланс меняется в играх
   document.addEventListener("visibilitychange", () => { if (document.hidden) syncMe(true); });

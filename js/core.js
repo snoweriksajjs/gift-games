@@ -796,6 +796,7 @@
       navigator.clipboard && navigator.clipboard.writeText(link).then(() => toast("Ссылка скопирована"), () => toast("Не получилось скопировать"));
     });
     $("#refShare").addEventListener("click", () => {
+      if (App.shareRef && App.shareRef()) return;   // анимированный баннер через бота
       const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("DuckChance: игры на подарки за звёзды. Заходи")}`;
       if (inTg) try { return tg.openTelegramLink(url); } catch {}
       window.open(url, "_blank");

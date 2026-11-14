@@ -24,7 +24,7 @@ SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 BANNER = os.environ.get("BANNER", "https://snoweriksajjs.github.io/gift-games/img/logo-banner.jpg")
 CODE_KEY = os.environ.get("CODE_KEY", "duckchance-codes-v1")   # тот же ключ, что в js/core.js
 REF_BONUS = int(os.environ.get("REF_BONUS", "100"))
-VER = os.environ.get("APP_VER", "18")
+VER = os.environ.get("APP_VER", "20")
 LOG = os.environ.get("PAY_LOG", "payments.log")
 SEEN = os.environ.get("SEEN_FILE", "seen_users.json")
 STATE = os.environ.get("BOT_STATE", os.path.join(os.path.dirname(os.path.abspath(SEEN)), "bot_state.json"))
@@ -254,7 +254,7 @@ def send_profile(chat, uid, tg_user):
                f"{e('party')} Подарков: <b>{len([g for g in gifts if g in cat])}</b> на <b>{fmt(value)} ⭐</b>\n"
                + (f"{e('strong')} В стейкинге: <b>{data['staked']}</b>\n" if data["staked"] else ""))
     kb = {"inline_keyboard": [[app_btn("Открыть профиль", icon="cool", style="primary", open="profile")],
-                              [{"text": "Обновить", "callback_data": "profile"}]]}
+                              [{"text": "Пригласить друга", "callback_data": "invite"}, {"text": "Обновить", "callback_data": "profile"}]]}
     key = profile_card._key(data)
     try:
         if key in state["cards"]:
@@ -274,6 +274,43 @@ def send_profile(chat, uid, tg_user):
 
 def escape(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ---------- реферальный баннер ----------
+def ref_caption():
+    return (f"{e('party')} <b>Залетай в DuckChance</b>\n\n"
+            "Тут выбивают NFT-подарки Telegram: Plush Pepe, Durov's Cap, Heart Locket и ещё полсотни коллекций.\n\n"
+            f"{e('fire')} Каждый день бесплатное яйцо с подарком внутри\n"
+            f"{e('cool')} Апгрейд, краш, арена: раунд длится секунды\n"
+            f"{e('ok')} Любой результат можно проверить\n\n"
+            f"Жми кнопку и забирай первое яйцо {e('point')}")
+
+
+def send_invite(chat, uid, tg_user):
+    """Персональный анимированный баннер: его пересылают в чаты, кнопка со ссылкой уходит вместе с ним."""
+    link = f"https://t.me/{bot_name()}?start=ref_{uid}"
+    row = user_row(uid) or {}
+    data = {"name": row.get("name") or tg_user.get("first_name") or "Друг", "photo": row.get("photo") or ""}
+    kb = {"inline_keyboard": [[{"text": "Забрать бесплатно", "url": link, "style": "success", "icon_custom_emoji_id": DUCK["party"][1]}]]}
+    try:
+        call("sendChatAction", chat_id=chat, action="upload_video")
+        import profile_card
+        key = "ref:" + profile_card._key(data)
+        if key in state["cards"]:
+            tg("sendAnimation", chat_id=chat, animation=state["cards"][key], caption=ref_caption(), parse_mode="HTML", reply_markup=kb)
+        else:
+            mp4, _ = profile_card.render_ref(data)
+            m = tg("sendAnimation", file=("animation", mp4), chat_id=chat, caption=ref_caption(), parse_mode="HTML", reply_markup=kb,
+                   width=profile_card.W, height=profile_card.H)
+            fid = (m.get("animation") or m.get("document") or {}).get("file_id")
+            if fid:
+                state["cards"][key] = fid
+                save_state()
+    except Exception as err:
+        print("Реферальный баннер не вышел:", err, flush=True)
+        send(chat, ref_caption(), reply_markup=kb)
+    send(chat, f"{e('money')} <b>Перешлите сообщение выше друзьям или в чаты.</b>\n\nЗа каждого, кто придёт по вашей кнопке, вы получите <b>{REF_BONUS} ⭐</b>.\n\nВаша ссылка: <code>{link}</code>",
+         reply_markup={"inline_keyboard": [[{"text": "Выбрать чат", "url": share_url(uid)}]]}, disable_web_page_preview=True)
 
 
 # ---------- поддержка ----------
@@ -362,9 +399,7 @@ def on_command(m, cmd):
         send(chat, f"{e('love')} Личные сообщения, группы и каналы игроков. Там же можно подарить подарок.",
              reply_markup=play_button("Открыть чаты", open="chats"))
     elif cmd == "invite":
-        link = f"https://t.me/{bot_name()}?start=ref_{uid}"
-        send(chat, f"{e('money')} <b>Приглашайте друзей</b>\n\nЗа каждого, кто запустит бота по вашей ссылке, вы получите <b>{REF_BONUS} звёзд</b>.\n\n<code>{link}</code>",
-             reply_markup={"inline_keyboard": [[{"text": "Отправить другу", "url": share_url(uid)}]]}, disable_web_page_preview=True)
+        threading.Thread(target=send_invite, args=(chat, uid, m["from"]), daemon=True).start()
     elif cmd == "support":
         ask_support(chat, uid)
     elif cmd == "help":
@@ -384,13 +419,15 @@ def on_command(m, cmd):
 
 def on_callback(q):
     data, chat, uid = q.get("data"), q["message"]["chat"]["id"], q["from"]["id"]
-    call("answerCallbackQuery", callback_query_id=q["id"], **({"text": "Рисуем профиль…"} if data == "profile" else {}))
+    call("answerCallbackQuery", callback_query_id=q["id"], **({"text": "Рисуем профиль…"} if data == "profile" else {"text": "Готовим приглашение…"} if data == "invite" else {}))
     if data == "help":
         send(chat, HELP, reply_markup=play_button("Играть"))
     elif data == "profile":
         threading.Thread(target=send_profile, args=(chat, uid, q["from"]), daemon=True).start()
     elif data == "support":
         ask_support(chat, uid)
+    elif data == "invite":
+        threading.Thread(target=send_invite, args=(chat, uid, q["from"]), daemon=True).start()
     elif data == "support_cancel":
         waiting_support.pop(uid, None)
         try:

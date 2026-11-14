@@ -339,7 +339,7 @@ def render_ref(d):
     base = _radial((W, H), (930, 330), (74, 58, 22), (11, 11, 13), 820)
     # звёзды Telegram узором по кругу вокруг подарков
     star = _tgstar(40)
-    rings = [(220, 9, .30, 34, 1), (330, 14, .18, 30, -1), (450, 20, .10, 26, 1)]
+    rings = [(220, 9, .22, 34, 1), (330, 14, .13, 30, -1), (450, 20, .07, 26, 1)]
     ring_imgs = [(r, n, _with_alpha(star.resize((sz, sz), Image.LANCZOS), o), sz, dr) for r, n, o, sz, dr in rings]
 
     txt = Image.new("RGBA", (W, H))
@@ -375,8 +375,8 @@ def render_ref(d):
     td.text((L, 278), "NFT-подарки", font=hf, fill=(253, 211, 17))
     td.text((L, 360), "Telegram", font=hf, fill=(255, 255, 255))
     sf = _font("Medium", 30)
-    td.text((L, 466), "Каждый день бесплатное яйцо", font=sf, fill=(255, 255, 255, 215))
-    td.text((L, 506), "с подарком внутри", font=sf, fill=(255, 255, 255, 215))
+    td.text((L, 452), "Каждый день бесплатное яйцо", font=sf, fill=(255, 255, 255, 215))
+    td.text((L, 490), "с подарком внутри", font=sf, fill=(255, 255, 255, 215))
 
     cta_text = "Забрать бесплатно"
     cf = _font("Bold", 32)
@@ -444,7 +444,7 @@ def render_ref(d):
             sh.alpha_composite(band, (int(-160 + (c2.width + 200) * t / .5), -30))
             sh.putalpha(Image.composite(sh.getchannel("A"), Image.new("L", c2.size, 0), c2.getchannel("A").point(lambda a: 255 if a > 128 else 0)))
             c2.alpha_composite(sh)
-        fr.alpha_composite(c2, (int(L + cw / 2 - c2.width / 2), int(576 - c2.height / 2 + 4)))
+        fr.alpha_composite(c2, (int(L + cw / 2 - c2.width / 2), int(596 - c2.height / 2)))
         frame = fr.convert("RGB")
         frame.save(os.path.join(tmp, f"f{fi:03d}.png"), compress_level=1)
         if fi == 0:

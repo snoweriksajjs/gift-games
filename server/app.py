@@ -25,14 +25,21 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "18")
+VER = os.environ.get("APP_VER", "20")
 BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
 HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 SYM = re.compile(r"^https://cdn\.changes\.tg/[^\"'()\s]{1,200}$")
 HANDLE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{3,23}$")
-MEDIA_NAME = re.compile(r"^[0-9a-f]{20}\.jpg$")
+MEDIA_NAME = re.compile(r"^[0-9a-f]{20}\.(jpg|mp4)$")
+# текст под реферальным баннером: его видят друзья, которым его переслали
+REF_CAPTION = ("🎁 <b>Залетай в DuckChance</b>\n\n"
+               "Тут выбивают NFT-подарки Telegram: Plush Pepe, Durov's Cap, Heart Locket и ещё полсотни коллекций.\n\n"
+               "🥚 Каждый день бесплатное яйцо с подарком внутри\n"
+               "⚡ Апгрейд, краш, арена: раунд длится секунды\n"
+               "🔒 Любой результат можно проверить\n\n"
+               "Жми кнопку и забирай первое яйцо 👇")
 RESERVED = {"admin", "admins", "support", "duckchance", "telegram", "settings", "official", "moderator"}
 
 # права админа и разрешения участников, как в Telegram
@@ -179,7 +186,7 @@ def clean_look(look):
 def clean_photo(url):
     url = str(url or "")
     name = url.rsplit("/", 1)[-1]
-    return f"{PUBLIC}/media/{name}" if url.startswith(PUBLIC + "/media/") and MEDIA_NAME.match(name) else ""
+    return f"{PUBLIC}/media/{name}" if url.startswith(PUBLIC + "/media/") and MEDIA_NAME.match(name) and name.endswith(".jpg") else ""
 
 
 def user_card(uid, full=False):
@@ -666,6 +673,27 @@ def api(method, path, uid, body, query):
                         allow_channel_chats=True, allow_bot_chats=False)
             return {"id": r["result"]["id"], "link": link}
 
+    if p == ["ref", "share"] and method == "POST":   # реферальный баннер для пересылки в любой чат
+        limit(uid, "refshare", 10, 3600)
+        import profile_card, shutil
+        u = user_card(uid)
+        mp4, jpg = profile_card.render_ref({"name": u["name"], "photo": u["photo"]})
+        urls = []
+        for src in (mp4, jpg):
+            name = hashlib.sha256(open(src, "rb").read()).hexdigest()[:20] + os.path.splitext(src)[1]
+            dst = os.path.join(MEDIA, name)
+            if not os.path.exists(dst):
+                shutil.copyfile(src, dst)
+            urls.append(f"{PUBLIC}/media/{name}")
+        link = f"https://t.me/{BOT_NAME}?start=ref_{uid}"
+        result = {"type": "mpeg4_gif", "id": f"r{uid}x{now}", "mpeg4_url": urls[0], "thumbnail_url": urls[1],
+                  "thumbnail_mime_type": "image/jpeg", "mpeg4_width": profile_card.W, "mpeg4_height": profile_card.H,
+                  "caption": REF_CAPTION, "parse_mode": "HTML",
+                  "reply_markup": {"inline_keyboard": [[{"text": "🎁 Забрать бесплатно", "url": link}]]}}
+        r = tg_call("savePreparedInlineMessage", user_id=uid, result=result, allow_user_chats=True, allow_group_chats=True,
+                    allow_channel_chats=True, allow_bot_chats=False)
+        return {"id": r["result"]["id"], "link": link}
+
     if p == ["gift", "send"] and method == "POST":
         limit(uid, "gift", 10, 60)
         to, gift = int(body.get("to") or 0), clean(body.get("gift"), 8)
@@ -729,7 +757,7 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, "rb") as f:
             data = f.read()
         self.send_response(200)
-        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Type", "video/mp4" if name.endswith(".mp4") else "image/jpeg")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header("Access-Control-Allow-Origin", "*")
