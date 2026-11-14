@@ -610,7 +610,17 @@ img.a-ball-in { display: block; width: 100%; height: 100%; }
   position: relative; overflow: hidden; border-radius: 20px; padding: 26px 16px 20px; color: #fff; text-align: center;
   display: grid; justify-items: center; gap: 2px; background: radial-gradient(circle at 50% 35%, var(--c1), var(--c2));
 }
-.pf-banner:not(.has) .pat { display: none; }
+.pf-rings { position: absolute; inset: 0; pointer-events: none; }
+.pf-banner:not(.has) .pf-rings { display: none; }
+.pf-rings i { position: absolute; aspect-ratio: 1; transform: translate(-50%, -50%); background: var(--cp); -webkit-mask: var(--sym) center / contain no-repeat; mask: var(--sym) center / contain no-repeat; }
+.pf-banner h1 { display: flex; align-items: center; gap: 6px; }
+.pf-gift[hidden] { display: none; }
+.pf-gift { width: 26px; height: 26px; object-fit: contain; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .25)); }
+.bn-gifts { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.bn-gift { padding: 0; border-radius: 14px; background: none; }
+.bn-gift .chip { width: 100%; height: auto; aspect-ratio: 1; border-radius: 14px; }
+.bn-gift.on { box-shadow: 0 0 0 2.5px var(--bg), 0 0 0 5px var(--btn); }
+.empty.sm { grid-column: 1 / -1; padding: 14px; font-size: 14px; }
 .pf-banner .ava { position: relative; box-shadow: 0 0 0 4px rgba(255, 255, 255, .35); }
 .pf-banner h1 { position: relative; margin: 10px 0 0; font-size: 24px; font-weight: 700; letter-spacing: -.3px; }
 .pf-banner p { position: relative; margin: 0; font-size: 15px; color: rgba(255, 255, 255, .78); }

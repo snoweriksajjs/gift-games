@@ -869,34 +869,54 @@
       if (!seenS.has(g.sym) && BANNER_SYMS.length < 31) { seenS.add(g.sym); BANNER_SYMS.push({ name: g.symbol, sym: g.sym }); }
     }
   })();
+  const owned = (id) => state.inv.some((x) => x.id === id);
   function bannerLook() {
     if (state.banner) return state.banner;
     const top = [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price)[0];
     const g = top && byId[top.id];
-    return g ? { c1: g.c1, c2: g.c2, cp: g.cp, sym: g.sym } : { c1: "#5ea8ff", c2: "#2f6fe0", cp: "#1f55b8", sym: null };
+    return g ? { c1: g.c1, c2: g.c2, cp: g.cp, sym: g.sym, gift: g.id } : { c1: "#5ea8ff", c2: "#2f6fe0", cp: "#1f55b8", sym: null };
   }
+  // узор как в Telegram: символы кольцами вокруг аватарки, к краям бледнее
+  const RINGS = [[62, 7, 0.6, 22], [96, 11, 0.4, 20], [132, 15, 0.24, 18], [170, 19, 0.13, 16], [210, 23, 0.06, 15]];
+  const ringsHtml = RINGS.map(([r, n, o, sz], k) => Array.from({ length: n }, (_, i) => {
+    const a = (i + (k % 2) * 0.5) / n * Math.PI * 2;
+    return `<i style="left:calc(50% + ${(Math.cos(a) * r * 1.35).toFixed(1)}px);top:${(70 + Math.sin(a) * r * 0.8).toFixed(1)}px;opacity:${o};width:${sz}px"></i>`;
+  }).join("")).join("");
   function paintBanner() {
-    const b = bannerLook(), el = $("#pfBanner");
+    const b = bannerLook(), el = $("#pfBanner"), rings = $("#pfRings");
     el.style.cssText = `--c1:${b.c1};--c2:${b.c2};--cp:${b.cp}` + (b.sym ? `;--sym:url('${b.sym}')` : "");
     el.classList.toggle("has", !!b.sym);
+    if (b.sym && !rings.firstChild) rings.innerHTML = ringsHtml;
+    const g = b.gift && owned(b.gift) ? byId[b.gift] : null, ic = $("#pfGift");
+    ic.hidden = !g;
+    if (g) { ic.src = g.img; ic.alt = g.gift; }
   }
   function renderBannerSheet() {
     const b = bannerLook();
-    $("#bnColors").innerHTML = BANNER_COLORS.map((c, i) => `<button class="bn-color ${c.c1 === b.c1 && c.c2 === b.c2 ? "on" : ""}" data-c="${i}" title="${c.name}" aria-label="${c.name}" style="background:radial-gradient(circle at 50% 35%, ${c.c1}, ${c.c2})"></button>`).join("");
+    const ids = [...new Set([...state.inv].sort((x, y) => byId[y.id].price - byId[x.id].price).map((x) => x.id))];
+    $("#bnGifts").innerHTML = ids.length
+      ? ids.map((id) => `<button class="bn-gift ${b.gift === id ? "on" : ""}" data-g="${id}" aria-label="${byId[id].gift}">${chip(byId[id])}</button>`).join("")
+      : `<div class="empty sm">Выиграйте подарок, и его можно будет поставить на обложку</div>`;
+    $("#bnColors").innerHTML = BANNER_COLORS.map((c, i) => `<button class="bn-color ${!b.gift && c.c1 === b.c1 && c.c2 === b.c2 ? "on" : ""}" data-c="${i}" title="${c.name}" aria-label="${c.name}" style="background:radial-gradient(circle at 50% 35%, ${c.c1}, ${c.c2})"></button>`).join("");
     $("#bnSyms").innerHTML = `<button class="bn-sym none ${!b.sym ? "on" : ""}" data-s="-1" aria-label="Без узора">Нет</button>` +
-      BANNER_SYMS.map((x, i) => `<button class="bn-sym ${x.sym === b.sym ? "on" : ""}" data-s="${i}" title="${x.name}" aria-label="${x.name}"><i style="--sym:url('${x.sym}')"></i></button>`).join("");
+      BANNER_SYMS.map((x, i) => `<button class="bn-sym ${!b.gift && x.sym === b.sym ? "on" : ""}" data-s="${i}" title="${x.name}" aria-label="${x.name}"><i style="--sym:url('${x.sym}')"></i></button>`).join("");
   }
   function initBanner() {
     $("#bannerEdit").addEventListener("click", () => { renderBannerSheet(); openSheet($("#bannerSheet")); });
+    $("#bnGifts").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-g]"); if (!b) return;
+      const g = byId[b.dataset.g];
+      state.banner = { c1: g.c1, c2: g.c2, cp: g.cp, sym: g.sym, gift: g.id }; save(); hap.soft(); paintBanner(); renderBannerSheet();
+    });
     $("#bnColors").addEventListener("click", (e) => {
       const b = e.target.closest("[data-c]"); if (!b) return;
       const c = BANNER_COLORS[Number(b.dataset.c)];
-      state.banner = { ...bannerLook(), c1: c.c1, c2: c.c2, cp: c.cp }; save(); hap.soft(); paintBanner(); renderBannerSheet();
+      state.banner = { ...bannerLook(), c1: c.c1, c2: c.c2, cp: c.cp, gift: null }; save(); hap.soft(); paintBanner(); renderBannerSheet();
     });
     $("#bnSyms").addEventListener("click", (e) => {
       const b = e.target.closest("[data-s]"); if (!b) return;
       const i = Number(b.dataset.s);
-      state.banner = { ...bannerLook(), sym: i < 0 ? null : BANNER_SYMS[i].sym }; save(); hap.soft(); paintBanner(); renderBannerSheet();
+      state.banner = { ...bannerLook(), sym: i < 0 ? null : BANNER_SYMS[i].sym, gift: null }; save(); hap.soft(); paintBanner(); renderBannerSheet();
     });
     $("#bnReset").addEventListener("click", () => { state.banner = null; save(); hap.soft(); paintBanner(); renderBannerSheet(); });
   }
