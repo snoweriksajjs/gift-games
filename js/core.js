@@ -3,7 +3,7 @@
 (() => {
   "use strict";
 
-  const BOT_USERNAME = "IitvIn_bot";   // имя бота без @, нужно для реферальной ссылки
+  const BOT_USERNAME = "DuckChanceApp";   // имя бота без @, нужно для реферальной ссылки
   const REF_BONUS = 100;               // звёзд за друга, который сделал первую игру
   const SITE = "https://snoweriksajjs.github.io/gift-games";   // публичный адрес, нужен для карточек в сторис
   const ADMIN_ID = 8083284748;         // кому показывается админ-панель
@@ -620,9 +620,9 @@
   // через tg.openInvoice и начисляет баланс после статуса "paid".
   // Сейчас начисление идёт в браузере. В рабочем сервисе баланс начисляет сервер по событию successful_payment.
   const INVOICES = {
-    10: "https://t.me/$LN-JAKgBuUtpIgAAC7KDKjg67XQ", 50: "https://t.me/$kXUHQagBuUtqIgAARB2LhvlMtWw",
-    100: "https://t.me/$ezBuK6gBuUtrIgAANyk_fOQzlDc", 250: "https://t.me/$DZhfNqgBuUtsIgAAkpSgFHyCkUs",
-    500: "https://t.me/$Bv2e5qgBuUttIgAAlGn5BUAl2Jo", 1000: "https://t.me/$ZyPPGagBuUtuIgAA-2oWJe2MAx0",
+    10: "https://t.me/$ThHzXod7yUsvHwAA0KMZ1YSQHbw", 50: "https://t.me/$eYtStId7yUswHwAAgCE4vk4gp8w",
+    100: "https://t.me/$WONdfId7yUsxHwAAp8IUBHme8F4", 250: "https://t.me/$nuSmI4d7yUsyHwAAQ4B9Zte7PFM",
+    500: "https://t.me/$7-pqaod7yUszHwAAZ4TCnz36KrQ", 1000: "https://t.me/$t10DoId7yUs0HwAAMKDceCjLeDg",
   };
   function buyStars(n) {
     if (!INVOICES[n]) return;
@@ -832,6 +832,10 @@
     const q = new URLSearchParams(location.search);
     const ref = q.get("ref");
     if (ref && !state.referrer && !(user && String(user.id) === ref)) { state.referrer = ref; save(); }
+    // кнопки бота открывают нужный раздел: ?open=egg или ?open=chats
+    const open = q.get("open");
+    if (open === "egg" && modes.egg) setTimeout(() => showMode("egg"), 300);
+    if (open === "chats") setTimeout(() => showTab("pageChats"), 300);
     const code = q.get("code");
     if (code) setTimeout(() => redeemCode(code, (state.codes || []).includes(code)), 1400);
   }
@@ -840,6 +844,7 @@
   function initProfile() {
     const name = user ? [user.first_name, user.last_name].filter(Boolean).join(" ") : "Гость";
     all("[data-name]").forEach((n) => (n.textContent = name));
+    $("#barMe").addEventListener("click", () => { if (!App.busy) { hap.select(); showTab("pageProfile"); } });
     all("[data-ava]").forEach((a) => {
       a.textContent = name.trim().charAt(0).toUpperCase();
       if (user && user.photo_url) { a.style.backgroundImage = `url("${user.photo_url}")`; a.textContent = ""; }

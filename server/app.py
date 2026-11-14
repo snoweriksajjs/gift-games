@@ -25,8 +25,8 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "15")
-BOT_NAME = os.environ.get("BOT_NAME", "IitvIn_bot")
+VER = os.environ.get("APP_VER", "16")
+BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
 HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
@@ -111,7 +111,9 @@ class HttpError(Exception):
 
 
 # ---------- вход через Telegram ----------
-SECRET = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+# подпись проверяем ключом текущего бота; TG_TOKEN_OLD — прежние боты на время переезда (через запятую)
+SECRETS = [hmac.new(b"WebAppData", t.encode(), hashlib.sha256).digest()
+           for t in [TOKEN] + [x for x in os.environ.get("TG_TOKEN_OLD", "").split(",") if x]]
 
 
 def check_init_data(raw):
@@ -119,8 +121,8 @@ def check_init_data(raw):
     pairs = dict(urllib.parse.parse_qsl(raw, keep_blank_values=True))
     got = pairs.pop("hash", "")
     check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
-    want = hmac.new(SECRET, check.encode(), hashlib.sha256).hexdigest()
-    if not got or not hmac.compare_digest(want, got):
+    ok = any(hmac.compare_digest(hmac.new(k, check.encode(), hashlib.sha256).hexdigest(), got) for k in SECRETS)
+    if not got or not ok:
         raise HttpError(401, "bad signature")
     if time.time() - int(pairs.get("auth_date", "0")) > AUTH_TTL:
         raise HttpError(401, "expired")

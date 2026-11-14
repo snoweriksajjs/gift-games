@@ -6,7 +6,7 @@
   <title>DuckChance</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css?v=15" />
+  <link rel="stylesheet" href="style.css?v=16" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -24,6 +24,7 @@
 
   <div class="splash" id="splash" aria-hidden="true">
     <span class="duck splash-duck" data-duck="hi"></span>
+    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=16" alt=""><i class="logo-word"></i></div>
     <div class="splash-bar"><i></i></div>
   </div>
 
@@ -31,16 +32,13 @@
     <!-- ===== Игры ===== -->
     <main class="page on" id="pageUp">
       <header class="bar">
-        <div class="me">
-          <div class="ava" data-ava>Г</div>
-          <div class="me-text">
-            <div class="me-name" data-name>Гость</div>
-            <div class="me-sub">DuckChance</div>
-          </div>
+        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=16" alt=""><i class="logo-word"></i></h1>
+        <div class="bar-right">
+          <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
+            <svg class="star"><use href="#star" /></svg><b data-balance>0</b><span class="plus" aria-hidden="true">+</span>
+          </button>
+          <button class="bar-me" id="barMe" aria-label="Профиль"><span class="ava" data-ava>Г</span></button>
         </div>
-        <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
-          <svg class="star"><use href="#star" /></svg><b data-balance>0</b><span class="plus" aria-hidden="true">+</span>
-        </button>
       </header>
 
       <section class="stories" id="feed" hidden>
@@ -489,15 +487,15 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=15"></script>
-  <script src="js/core.js?v=15"></script>
-  <script src="js/modes/classic.js?v=15"></script>
-  <script src="js/modes/streak.js?v=15"></script>
-  <script src="js/modes/contract.js?v=15"></script>
-  <script src="js/modes/arena.js?v=15"></script>
-  <script src="js/modes/crash.js?v=15"></script>
-  <script src="js/modes/egg.js?v=15"></script>
-  <script src="js/social.js?v=15"></script>
+  <script src="gifts.js?v=16"></script>
+  <script src="js/core.js?v=16"></script>
+  <script src="js/modes/classic.js?v=16"></script>
+  <script src="js/modes/streak.js?v=16"></script>
+  <script src="js/modes/contract.js?v=16"></script>
+  <script src="js/modes/arena.js?v=16"></script>
+  <script src="js/modes/crash.js?v=16"></script>
+  <script src="js/modes/egg.js?v=16"></script>
+  <script src="js/social.js?v=16"></script>
   <script>App.start();</script>
 </body>
 </html>

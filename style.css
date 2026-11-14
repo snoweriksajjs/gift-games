@@ -1032,3 +1032,15 @@ button.pn-line b { color: var(--link); }
 .ch-off[hidden], #chFound[hidden], .ch-list[hidden], #stkSec[hidden] { display: none; }
 .cv-pin-x[hidden], .cv-attach[hidden] { display: none; }
 .pn-screen, .sheet-body { grid-auto-rows: max-content; }
+/* логотип DuckChance: утка в фирменном жёлтом, надпись цветом текста темы */
+.logo { display: flex; align-items: center; gap: 7%; margin: 0; }
+.logo-mark { height: 100%; width: auto; flex: none; }
+.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=16") center / contain no-repeat; mask: url("img/logo-word.png?v=16") center / contain no-repeat; }
+.bar-logo { height: 24px; gap: 7px; flex: none; }
+.splash-logo { height: 46px; gap: 12px; margin-top: -6px; animation: logoIn .6s cubic-bezier(.2, .9, .3, 1.1) both .1s; }
+.splash-logo .logo-mark { animation: logoBob 1.6s ease-in-out infinite .7s; transform-origin: 70% 80%; }
+@keyframes logoIn { from { opacity: 0; transform: translateY(10px) scale(.94); } }
+@keyframes logoBob { 50% { transform: rotate(-6deg) translateY(-2px); } }
+.bar-right { display: flex; align-items: center; gap: 8px; }
+.bar-me .ava { width: 36px; height: 36px; font-size: 15px; transition: transform .15s; }
+.bar-me:active .ava { transform: scale(.9); }
