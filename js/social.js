@@ -7,7 +7,7 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   // ---------- сервер ----------
-  const PROD_API = "";   // адрес сервера на VPS, например https://1-2-3-4.sslip.io. Пока пусто, чаты выключены
+  const PROD_API = "https://duck.2-27-12-205.sslip.io";   // сервер на VPS (server/app.py за nginx)
   const LOCAL = /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
   const API = LOCAL ? "http://127.0.0.1:8790" : PROD_API;
   // на своём компьютере без Telegram входим тестовым игроком: ?as=2 открывает второго

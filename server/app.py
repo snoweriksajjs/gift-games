@@ -20,7 +20,7 @@ DB_PATH = os.environ.get("DB", "duckchance.db")
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "13")
+VER = os.environ.get("APP_VER", "14")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
 HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
@@ -415,7 +415,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     if os.environ.get("BOT") == "1":
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        here = os.path.dirname(os.path.abspath(__file__))
+        sys.path[:0] = [here, os.path.dirname(here)]   # bot_poller.py лежит рядом или уровнем выше
         import bot_poller
         threading.Thread(target=bot_poller.main, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
