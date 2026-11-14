@@ -1,37 +1,54 @@
-"""Сервер DuckChance: чаты, группы, каналы и передача подарков между игроками.
+"""Сервер DuckChance: чаты, группы и каналы как в Telegram, юзернеймы, передача подарков.
 
 Запуск:  TG_TOKEN=<токен бота> python3 server/app.py
 Переменные окружения:
   TG_TOKEN   токен бота (обязательно). Им проверяется подпись initData из Telegram.
-  PORT       порт (по умолчанию 8787). Снаружи сервер закрывает Caddy с HTTPS.
-  DB         путь к базе SQLite (по умолчанию duckchance.db рядом с запуском)
+  PORT       порт (по умолчанию 8787). Снаружи сервер закрывает nginx с HTTPS.
+  DB         путь к базе SQLite (по умолчанию duckchance.db)
+  MEDIA      папка для загруженных фото (по умолчанию media рядом с базой)
+  PUBLIC     внешний адрес сервера, нужен для картинок в приглашениях
   ORIGIN     адрес сайта, которому разрешены запросы (по умолчанию GitHub Pages)
   BOT        1, чтобы в этом же процессе работал бот (оплата, приглашения, уведомления)
+  BOT_NAME   имя бота без @ для ссылок-приглашений
   DEV        1 только для проверки на своём компьютере: вход без Telegram по заголовку X-Dev-User
 
 Только стандартная библиотека Python 3.9+.
 """
-import hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.parse, urllib.request
+import base64, hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("TG_TOKEN") or sys.exit("Нужна переменная окружения TG_TOKEN")
 PORT = int(os.environ.get("PORT", "8787"))
 DB_PATH = os.environ.get("DB", "duckchance.db")
+MEDIA = os.environ.get("MEDIA") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "media")
+PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/")
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "14")
+VER = os.environ.get("APP_VER", "15")
+BOT_NAME = os.environ.get("BOT_NAME", "IitvIn_bot")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
 HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 SYM = re.compile(r"^https://cdn\.changes\.tg/[^\"'()\s]{1,200}$")
+HANDLE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{3,23}$")
+MEDIA_NAME = re.compile(r"^[0-9a-f]{20}\.jpg$")
+RESERVED = {"admin", "admins", "support", "duckchance", "telegram", "settings", "official", "moderator"}
+
+# права админа и разрешения участников, как в Telegram
+ADMIN_RIGHTS = ["info", "post", "delete", "ban", "invite", "pin", "promote"]
+MEMBER_PERMS = ["send", "media", "gifts", "invite", "pin"]
+DEFAULT_PERMS = {"send": True, "media": True, "gifts": True, "invite": True, "pin": False}
+DEFAULT_ADMIN = {"info": True, "post": True, "delete": True, "ban": True, "invite": True, "pin": True, "promote": False}
+
+os.makedirs(MEDIA, exist_ok=True)
 
 # ---------- база ----------
 db = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
 db.row_factory = sqlite3.Row
 db.execute("PRAGMA journal_mode=WAL")
 db.create_function("ulower", 1, lambda x: (x or "").lower())   # встроенный lower() в SQLite не знает кириллицу
-lock = threading.Lock()
+lock = threading.RLock()
 db.executescript("""
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, username TEXT, photo TEXT, look TEXT, seen INTEGER);
 CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, title TEXT, about TEXT, owner INTEGER,
@@ -44,7 +61,25 @@ CREATE INDEX IF NOT EXISTS messages_chat ON messages (chat, id);
 CREATE TABLE IF NOT EXISTS transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, from_user INTEGER, to_user INTEGER, gift TEXT,
   msg INTEGER, created INTEGER, claimed INTEGER);
 CREATE INDEX IF NOT EXISTS transfers_to ON transfers (to_user, claimed);
+CREATE TABLE IF NOT EXISTS bans (chat INTEGER, user INTEGER, PRIMARY KEY (chat, user));
 """)
+
+
+def add_column(table, col, decl):
+    cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+    if col not in cols:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
+# новые поля поверх первой версии базы
+for t, c, d in [("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
+                ("chats", "photo", "TEXT"), ("chats", "look", "TEXT"), ("chats", "handle", "TEXT"),
+                ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"),
+                ("members", "title", "TEXT"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
+                ("messages", "kind", "TEXT DEFAULT 'text'"), ("messages", "data", "TEXT"), ("messages", "deleted", "INTEGER")]:
+    add_column(t, c, d)
+db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_handle ON users (handle COLLATE NOCASE)")
+db.execute("CREATE UNIQUE INDEX IF NOT EXISTS chats_handle ON chats (handle COLLATE NOCASE)")
 
 
 def q(sql, *args):
@@ -60,6 +95,13 @@ def q1(sql, *args):
 def run(sql, *args):
     with lock:
         return db.execute(sql, args).lastrowid
+
+
+def jload(s, default=None):
+    try:
+        return json.loads(s) if s else default
+    except ValueError:
+        return default
 
 
 class HttpError(Exception):
@@ -85,13 +127,27 @@ def check_init_data(raw):
     return json.loads(pairs.get("user", "{}"))
 
 
+def handle_free(h, me_user=None, me_chat=None):
+    if not HANDLE.match(h or "") or h.lower() in RESERVED:
+        return False
+    u = q1("SELECT id FROM users WHERE handle=? COLLATE NOCASE", h)
+    c = q1("SELECT id FROM chats WHERE handle=? COLLATE NOCASE", h)
+    return (not u or u["id"] == me_user) and (not c or c["id"] == me_chat)
+
+
 def touch_user(u):
+    uid = int(u["id"])
     name = " ".join(x for x in [u.get("first_name"), u.get("last_name")] if x)[:64] or "Игрок"
+    tgname = (u.get("username") or "")[:32]
     with lock:
+        fresh = not db.execute("SELECT 1 FROM users WHERE id=?", (uid,)).fetchone()
         db.execute("""INSERT INTO users (id, name, username, photo, seen) VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name=excluded.name, username=excluded.username, photo=excluded.photo, seen=excluded.seen""",
-                   (int(u["id"]), name, (u.get("username") or "")[:32], (u.get("photo_url") or "")[:300], int(time.time())))
-    return int(u["id"])
+                   (uid, name, tgname, (u.get("photo_url") or "")[:300], int(time.time())))
+        # новичку юзернейм из Telegram, если он свободен
+        if fresh and tgname and handle_free(tgname, uid):
+            db.execute("UPDATE users SET handle=? WHERE id=?", (tgname, uid))
+    return uid
 
 
 # ---------- ограничение частоты ----------
@@ -108,23 +164,67 @@ def limit(uid, key, n, per):
 
 
 # ---------- разметка ответов ----------
-def user_card(uid):
-    u = q1("SELECT id, name, username, photo, look, seen FROM users WHERE id=?", uid)
+def clean(s, n):
+    return re.sub(r"[\u0000-\u0008\u000b-\u001f]", "", str(s or "")).strip()[:n]
+
+
+def clean_look(look):
+    look = look if isinstance(look, dict) else {}
+    ok = {"c1": HEX, "c2": HEX, "cp": HEX, "sym": SYM, "gift": GIFT_ID}
+    return {k: str(look[k]) for k, rx in ok.items() if isinstance(look.get(k), str) and rx.match(look[k])}
+
+
+def clean_photo(url):
+    url = str(url or "")
+    name = url.rsplit("/", 1)[-1]
+    return f"{PUBLIC}/media/{name}" if url.startswith(PUBLIC + "/media/") and MEDIA_NAME.match(name) else ""
+
+
+def user_card(uid, full=False):
+    u = q1("SELECT id, name, username, handle, photo, look, seen, gifts, bio FROM users WHERE id=?", uid)
     if not u:
-        return {"id": uid, "name": "Игрок", "username": "", "photo": "", "look": None}
-    u["look"] = json.loads(u["look"]) if u["look"] else None
-    return u
+        return {"id": uid, "name": "Игрок", "handle": "", "photo": "", "look": None, "seen": 0}
+    out = {"id": u["id"], "name": u["name"], "handle": u["handle"] or "", "photo": u["photo"] or "",
+           "look": jload(u["look"]), "seen": u["seen"] or 0}
+    if full:
+        out["gifts"] = jload(u["gifts"], [])
+        out["bio"] = u["bio"] or ""
+    return out
+
+
+def member(chat, uid):
+    m = q1("SELECT role, read_id, title, rights FROM members WHERE chat=? AND user=?", chat, uid)
+    if m:
+        m["rights"] = jload(m["rights"], {})
+    return m
+
+
+def can(c, me, right):
+    """Может ли участник сделать действие. Владелец может всё, админ по своим правам, участник группы по разрешениям чата."""
+    if not me:
+        return False
+    if me["role"] == "owner":
+        return True
+    if me["role"] == "admin":
+        if right in ("send", "media", "gifts"):
+            return True
+        return bool(me["rights"].get(right))
+    if c["kind"] == "group" and right in MEMBER_PERMS:
+        return bool({**DEFAULT_PERMS, **jload(c["perms"], {})}.get(right))
+    return c["kind"] == "dm" and right in ("send", "media", "gifts")
 
 
 def msg_out(m, cache):
     if m["user"] not in cache:
         cache[m["user"]] = user_card(m["user"])
-    return {"id": m["id"], "chat": m["chat"], "user": cache[m["user"]], "text": m["text"], "gift": m["gift"],
-            "reply": m["reply"], "created": m["created"]}
-
-
-def member(chat, uid):
-    return q1("SELECT role, read_id FROM members WHERE chat=? AND user=?", chat, uid)
+    out = {"id": m["id"], "chat": m["chat"], "user": cache[m["user"]], "kind": m.get("kind") or "text",
+           "text": m["text"] or "", "gift": m["gift"], "data": jload(m.get("data"), {}), "reply": m["reply"], "created": m["created"]}
+    if out["kind"] == "invite" and out["data"].get("chat"):
+        c = q1("SELECT * FROM chats WHERE id=?", out["data"]["chat"])
+        out["data"]["card"] = chat_card(c) if c else None
+    if m.get("deleted"):
+        out.update(kind="deleted", text="", gift=None, data={})
+    return out
 
 
 def chat_or_404(cid):
@@ -134,17 +234,35 @@ def chat_or_404(cid):
     return c
 
 
-def chat_out(c, uid):
+def chat_card(c):
+    """Короткая карточка группы или канала: для приглашений и поиска."""
+    owner = user_card(c["owner"])
+    return {"id": c["id"], "kind": c["kind"], "title": c["title"], "about": c["about"] or "", "photo": c["photo"] or "",
+            "look": jload(c["look"]), "handle": c["handle"] or "", "owner": {"id": owner["id"], "name": owner["name"], "handle": owner["handle"]},
+            "members": q1("SELECT COUNT(*) n FROM members WHERE chat=?", c["id"])["n"]}
+
+
+def chat_out(c, uid, full=False):
     me = member(c["id"], uid)
     last = q1("SELECT * FROM messages WHERE chat=? ORDER BY id DESC LIMIT 1", c["id"])
-    out = {"id": c["id"], "kind": c["kind"], "title": c["title"], "about": c["about"], "owner": c["owner"],
-           "role": me["role"] if me else None,
+    out = {"id": c["id"], "kind": c["kind"], "title": c["title"], "about": c["about"] or "", "owner": c["owner"],
+           "photo": c["photo"] or "", "look": jload(c["look"]), "handle": c["handle"] or "",
+           "role": me["role"] if me else None, "my_title": me["title"] if me else "",
            "members": q1("SELECT COUNT(*) n FROM members WHERE chat=?", c["id"])["n"],
            "last": msg_out(last, {}) if last else None,
            "unread": q1("SELECT COUNT(*) n FROM messages WHERE chat=? AND id>? AND user<>?", c["id"], me["read_id"], uid)["n"] if me else 0}
     if c["kind"] == "dm":
-        other = q1("SELECT user FROM members WHERE chat=? AND user<>?", c["id"], uid)
+        other = q1("SELECT user, read_id FROM members WHERE chat=? AND user<>?", c["id"], uid)
         out["peer"] = user_card(other["user"] if other else uid)
+        out["peer_read"] = other["read_id"] if other else 0
+    if full:
+        out["perms"] = {**DEFAULT_PERMS, **jload(c["perms"], {})}
+        out["can"] = {r: can(c, me, r) for r in ADMIN_RIGHTS + MEMBER_PERMS}
+        out["banned"] = bool(q1("SELECT 1 x FROM bans WHERE chat=? AND user=?", c["id"], uid))
+        pin = q1("SELECT * FROM messages WHERE id=? AND chat=? AND deleted IS NULL", c["pinned"], c["id"]) if c["pinned"] else None
+        out["pinned"] = msg_out(pin, {}) if pin else None
+        if c["kind"] != "dm":
+            out["owner_card"] = user_card(c["owner"])
     return out
 
 
@@ -158,16 +276,33 @@ def dm_chat(a, b):
         db.execute("INSERT OR IGNORE INTO chats (kind, title, about, owner, created, dm_key) VALUES ('dm', '', '', ?, ?, ?)", (a, now, key))
         cid = db.execute("SELECT id FROM chats WHERE dm_key=?", (key,)).fetchone()[0]
         for u in {a, b}:
-            db.execute("INSERT OR IGNORE INTO members (chat, user, role) VALUES (?, ?, 'member')", (cid, u))
+            db.execute("INSERT OR IGNORE INTO members (chat, user, role, joined) VALUES (?, ?, 'member', ?)", (cid, u, now))
     return chat_or_404(cid)
 
 
-def post_message(cid, uid, text="", gift=None, reply=None):
-    mid = run("INSERT INTO messages (chat, user, text, gift, reply, created) VALUES (?, ?, ?, ?, ?, ?)",
-              cid, uid, text, gift, reply, int(time.time()))
+def post_message(cid, uid, text="", gift=None, reply=None, kind="text", data=None, ping=True):
+    mid = run("INSERT INTO messages (chat, user, kind, text, gift, data, reply, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              cid, uid, kind, text, gift, json.dumps(data, ensure_ascii=False) if data else None, reply, int(time.time()))
     run("UPDATE members SET read_id=? WHERE chat=? AND user=?", mid, cid, uid)
-    notify(cid, uid, text, gift)
+    typing.get(cid, {}).pop(uid, None)
+    if ping:
+        notify(cid, uid, text, gift)
     return mid
+
+
+def service(cid, uid, action, **data):
+    """Служебное сообщение посередине чата: создал группу, вступил, сменил фото и так далее."""
+    return post_message(cid, uid, kind="service", data={"action": action, **data}, ping=False)
+
+
+# ---------- «печатает» ----------
+typing = {}
+
+
+def typing_now(cid, uid):
+    now = time.time()
+    t = typing.get(cid, {})
+    return [user_card(u)["name"] for u, ts in list(t.items()) if u != uid and now - ts < 5][:3]
 
 
 # ---------- уведомления через бота ----------
@@ -175,7 +310,7 @@ last_ping = {}
 
 
 def tg_call(method, **params):
-    data = urllib.parse.urlencode({k: json.dumps(v) if isinstance(v, (dict, list, bool)) else v for k, v in params.items()}).encode()
+    data = urllib.parse.urlencode({k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else v for k, v in params.items()}).encode()
     with urllib.request.urlopen(f"https://api.telegram.org/bot{TOKEN}/{method}", data=data, timeout=15) as r:
         return json.load(r)
 
@@ -204,24 +339,71 @@ def notify(cid, uid, text, gift):
     threading.Thread(target=send, daemon=True).start()
 
 
+def save_jpeg(data_url, max_bytes=700_000):
+    m = re.match(r"^data:image/jpeg;base64,([A-Za-z0-9+/=]+)$", data_url or "")
+    if not m:
+        raise HttpError(400, "jpeg only")
+    raw = base64.b64decode(m.group(1))
+    if len(raw) > max_bytes or raw[:3] != b"\xff\xd8\xff":
+        raise HttpError(400, "bad image")
+    name = hashlib.sha256(raw).hexdigest()[:20] + ".jpg"
+    path = os.path.join(MEDIA, name)
+    if not os.path.exists(path):
+        with open(path, "wb") as f:
+            f.write(raw)
+    return f"{PUBLIC}/media/{name}"
+
+
 # ---------- обработчики ----------
-def clean(s, n):
-    return re.sub(r"[\u0000-\u0008\u000b-\u001f]", "", str(s or "")).strip()[:n]
-
-
 def api(method, path, uid, body, query):
     p = path.strip("/").split("/")[1:]          # без "api"
     now = int(time.time())
 
     if p == ["me"] and method == "POST":
-        look = body.get("look")
-        if look is not None:
-            look = look if isinstance(look, dict) else {}
-            ok = {"c1": HEX, "c2": HEX, "cp": HEX, "sym": SYM, "gift": GIFT_ID}
-            look = {k: str(look[k]) for k, rx in ok.items() if isinstance(look.get(k), str) and rx.match(look[k])}
-            run("UPDATE users SET look=? WHERE id=?", json.dumps(look), uid)
+        sets = []
+        if body.get("look") is not None:
+            sets.append(("look", json.dumps(clean_look(body["look"]))))
+        if isinstance(body.get("gifts"), list):
+            sets.append(("gifts", json.dumps([g for g in body["gifts"] if isinstance(g, str) and GIFT_ID.match(g)][:60])))
+        if body.get("bio") is not None:
+            sets.append(("bio", clean(body["bio"], 140)))
+        for k, v in sets:
+            run(f"UPDATE users SET {k}=? WHERE id=?", v, uid)
         pending = q1("SELECT COUNT(*) n FROM transfers WHERE to_user=? AND claimed IS NULL", uid)["n"]
-        return {"me": user_card(uid), "pending": pending}
+        return {"me": user_card(uid, True), "pending": pending}
+
+    if p == ["handle"] and method == "GET":
+        h = clean(query.get("h", [""])[0], 24).lstrip("@")
+        return {"free": handle_free(h, uid), "valid": bool(HANDLE.match(h))}
+
+    if p == ["handle"] and method == "POST":
+        limit(uid, "handle", 10, 3600)
+        h = clean(body.get("handle"), 24).lstrip("@")
+        if h == "":
+            run("UPDATE users SET handle=NULL WHERE id=?", uid)
+            return {"me": user_card(uid, True)}
+        if not handle_free(h, uid):
+            raise HttpError(409, "taken")
+        try:
+            run("UPDATE users SET handle=? WHERE id=?", h, uid)
+        except sqlite3.IntegrityError:
+            raise HttpError(409, "taken")
+        return {"me": user_card(uid, True)}
+
+    if p == ["resolve"] and method == "GET":
+        h = clean(query.get("h", [""])[0], 24).lstrip("@")
+        u = q1("SELECT id FROM users WHERE handle=? COLLATE NOCASE", h)
+        if u:
+            return {"user": user_card(u["id"], True)}
+        c = q1("SELECT * FROM chats WHERE handle=? COLLATE NOCASE", h)
+        if c:
+            return {"chat": chat_card(c)}
+        raise HttpError(404, "not found")
+
+    if p == ["upload"] and method == "POST":
+        limit(uid, "upload", 30, 3600)
+        url = save_jpeg(body.get("data"))
+        return {"url": url}
 
     if p == ["chats"] and method == "GET":
         rows = q("SELECT c.* FROM chats c JOIN members m ON m.chat=c.id WHERE m.user=?", uid)
@@ -236,28 +418,32 @@ def api(method, path, uid, body, query):
         title = clean(body.get("title"), 48)
         if kind not in ("group", "channel") or not title:
             raise HttpError(400, "bad chat")
-        cid = run("INSERT INTO chats (kind, title, about, owner, created) VALUES (?, ?, ?, ?, ?)",
-                  kind, title, clean(body.get("about"), 200), uid, now)
-        run("INSERT INTO members (chat, user, role) VALUES (?, ?, 'owner')", cid, uid)
-        return chat_out(chat_or_404(cid), uid)
+        cid = run("INSERT INTO chats (kind, title, about, owner, created, photo, look) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  kind, title, clean(body.get("about"), 255), uid, now, clean_photo(body.get("photo")),
+                  json.dumps(clean_look(body.get("look"))) if body.get("look") else None)
+        run("INSERT INTO members (chat, user, role, joined) VALUES (?, ?, 'owner', ?)", cid, uid, now)
+        service(cid, uid, "created", title=title)
+        return chat_out(chat_or_404(cid), uid, True)
 
     if p == ["dm"] and method == "POST":
         other = int(body.get("user") or 0)
         if not q1("SELECT id FROM users WHERE id=?", other):
             raise HttpError(404, "no user")
-        return chat_out(dm_chat(uid, other), uid)
+        return chat_out(dm_chat(uid, other), uid, True)
 
     if p == ["search"] and method == "GET":
         s = clean(query.get("q", [""])[0], 32).lstrip("@").lower()
         if len(s) < 2:
             return {"users": [], "chats": []}
         like = f"%{s}%"
-        users = q("SELECT id FROM users WHERE id<>? AND (ulower(username) LIKE ? OR ulower(name) LIKE ?) ORDER BY seen DESC LIMIT 20", uid, like, like)
-        chats = q("SELECT * FROM chats WHERE kind<>'dm' AND ulower(title) LIKE ? ORDER BY id DESC LIMIT 20", like)
+        users = q("""SELECT id FROM users WHERE id<>? AND (ulower(handle) LIKE ? OR ulower(name) LIKE ?)
+                     ORDER BY CASE WHEN ulower(handle)=? THEN 0 ELSE 1 END, seen DESC LIMIT 20""", uid, like, like, s)
+        chats = q("""SELECT * FROM chats WHERE kind<>'dm' AND (ulower(title) LIKE ? OR ulower(handle) LIKE ?)
+                     ORDER BY CASE WHEN ulower(handle)=? THEN 0 ELSE 1 END, id DESC LIMIT 20""", like, like, s)
         return {"users": [user_card(u["id"]) for u in users], "chats": [chat_out(c, uid) for c in chats]}
 
     if len(p) == 2 and p[0] == "user" and method == "GET":
-        return user_card(int(p[1]))
+        return user_card(int(p[1]), True)
 
     if len(p) >= 2 and p[0] == "chat":
         cid = int(p[1])
@@ -269,7 +455,10 @@ def api(method, path, uid, body, query):
         sub = p[2] if len(p) > 2 else ""
 
         if sub == "" and method == "GET":
-            return chat_out(c, uid)
+            return chat_out(c, uid, True)
+
+        if sub == "card" and method == "GET":
+            return chat_card(c)
 
         if sub == "messages" and method == "GET":
             after = int(query.get("after", ["0"])[0] or 0)
@@ -277,46 +466,200 @@ def api(method, path, uid, body, query):
             if after:
                 rows = q("SELECT * FROM messages WHERE chat=? AND id>? ORDER BY id LIMIT 100", cid, after)
             else:
-                rows = q("SELECT * FROM messages WHERE chat=? AND (?=0 OR id<?) ORDER BY id DESC LIMIT 50", cid, before, before)[::-1]
+                rows = q("SELECT * FROM messages WHERE chat=? AND (?=0 OR id<?) ORDER BY id DESC LIMIT 60", cid, before, before)[::-1]
             if me and rows:
                 run("UPDATE members SET read_id=MAX(read_id, ?) WHERE chat=? AND user=?", rows[-1]["id"], cid, uid)
             cache = {}
-            return {"messages": [msg_out(m, cache) for m in rows]}
+            out = {"messages": [msg_out(m, cache) for m in rows], "typing": typing_now(cid, uid)}
+            # удалённые и правки после последнего опроса
+            since = int(query.get("since", ["0"])[0] or 0)
+            if since:
+                out["deleted"] = [r["id"] for r in q("SELECT id FROM messages WHERE chat=? AND deleted>=?", cid, since)]
+            if c["kind"] == "dm":
+                other = q1("SELECT read_id FROM members WHERE chat=? AND user<>?", cid, uid)
+                out["peer_read"] = other["read_id"] if other else 0
+            out["now"] = now
+            out["pinned"] = c["pinned"] or 0
+            return out
 
         if sub == "messages" and method == "POST":
             if not me:
                 raise HttpError(403, "join first")
-            if c["kind"] == "channel" and me["role"] not in ("owner", "admin"):
+            if c["kind"] == "channel" and not can(c, me, "post"):
                 raise HttpError(403, "only admins post in channels")
+            photo = body.get("photo") if isinstance(body.get("photo"), dict) else None
+            invite = int(body.get("invite") or 0)
+            if c["kind"] != "channel" and not can(c, me, "send"):
+                raise HttpError(403, "no rights")
+            if photo and not can(c, me, "media") and c["kind"] != "channel":
+                raise HttpError(403, "no media")
             limit(uid, "msg", 20, 10)
-            text = clean(body.get("text"), 2000)
-            if not text:
-                raise HttpError(400, "empty")
+            text = clean(body.get("text"), 4000)
             reply = body.get("reply")
             reply = int(reply) if reply and q1("SELECT id FROM messages WHERE id=? AND chat=?", int(reply), cid) else None
-            mid = post_message(cid, uid, text, None, reply)
+            if photo:
+                url = clean_photo(photo.get("url"))
+                if not url:
+                    raise HttpError(400, "bad photo")
+                w, h = int(photo.get("w") or 0), int(photo.get("h") or 0)
+                mid = post_message(cid, uid, text, None, reply, "photo", {"url": url, "w": max(1, min(w, 4000)), "h": max(1, min(h, 4000))})
+            elif invite:
+                ic = chat_or_404(invite)
+                if ic["kind"] == "dm":
+                    raise HttpError(400, "bad invite")
+                mid = post_message(cid, uid, text, None, reply, "invite", {"chat": invite})
+            else:
+                if not text:
+                    raise HttpError(400, "empty")
+                mid = post_message(cid, uid, text, None, reply)
             return msg_out(q1("SELECT * FROM messages WHERE id=?", mid), {})
 
+        if sub == "typing" and method == "POST":
+            if me:
+                typing.setdefault(cid, {})[uid] = time.time()
+            return {"ok": True}
+
+        if sub == "delete" and method == "POST":
+            m = q1("SELECT * FROM messages WHERE id=? AND chat=?", int(body.get("msg") or 0), cid)
+            if not m or not me:
+                raise HttpError(404, "no message")
+            if m["user"] != uid and not can(c, me, "delete"):
+                raise HttpError(403, "no rights")
+            run("UPDATE messages SET deleted=? WHERE id=?", now, m["id"])
+            if c["pinned"] == m["id"]:
+                run("UPDATE chats SET pinned=NULL WHERE id=?", cid)
+            return {"ok": True}
+
+        if sub == "pin" and method == "POST":
+            if not can(c, me, "pin"):
+                raise HttpError(403, "no rights")
+            mid = int(body.get("msg") or 0)
+            if mid and not q1("SELECT id FROM messages WHERE id=? AND chat=? AND deleted IS NULL", mid, cid):
+                raise HttpError(404, "no message")
+            run("UPDATE chats SET pinned=? WHERE id=?", mid or None, cid)
+            if mid:
+                service(cid, uid, "pinned", msg=mid)
+            return {"ok": True}
+
+        if sub == "edit" and method == "POST":
+            if not public or not can(c, me, "info"):
+                raise HttpError(403, "no rights")
+            if "title" in body:
+                t = clean(body["title"], 48)
+                if t and t != c["title"]:
+                    run("UPDATE chats SET title=? WHERE id=?", t, cid)
+                    service(cid, uid, "title", title=t)
+            if "about" in body:
+                run("UPDATE chats SET about=? WHERE id=?", clean(body["about"], 255), cid)
+            if "photo" in body:
+                ph = clean_photo(body["photo"])
+                if ph != (c["photo"] or ""):
+                    run("UPDATE chats SET photo=? WHERE id=?", ph or None, cid)
+                    service(cid, uid, "photo" if ph else "photo_removed", photo=ph)
+            if "look" in body:
+                run("UPDATE chats SET look=? WHERE id=?", json.dumps(clean_look(body["look"])) if body["look"] else None, cid)
+            if "handle" in body:
+                h = clean(body["handle"], 24).lstrip("@")
+                if h and not handle_free(h, None, cid):
+                    raise HttpError(409, "taken")
+                try:
+                    run("UPDATE chats SET handle=? WHERE id=?", h or None, cid)
+                except sqlite3.IntegrityError:
+                    raise HttpError(409, "taken")
+            if isinstance(body.get("perms"), dict):
+                if not can(c, me, "ban"):
+                    raise HttpError(403, "no rights")
+                old = {**DEFAULT_PERMS, **jload(c["perms"], {})}   # меняем только присланные разрешения
+                run("UPDATE chats SET perms=? WHERE id=?", json.dumps({k: bool(body["perms"].get(k, old[k])) for k in MEMBER_PERMS}), cid)
+            return chat_out(chat_or_404(cid), uid, True)
+
         if sub == "join" and method == "POST":
+            if q1("SELECT 1 x FROM bans WHERE chat=? AND user=?", cid, uid):
+                raise HttpError(403, "banned")
             if public and not me:
-                run("INSERT OR IGNORE INTO members (chat, user, role) VALUES (?, ?, 'member')", cid, uid)
-            return chat_out(c, uid)
+                run("INSERT OR IGNORE INTO members (chat, user, role, joined) VALUES (?, ?, 'member', ?)", cid, uid, now)
+                if c["kind"] == "group":
+                    service(cid, uid, "joined")
+            return chat_out(c, uid, True)
 
         if sub == "leave" and method == "POST":
             if me and me["role"] != "owner":
                 run("DELETE FROM members WHERE chat=? AND user=?", cid, uid)
+                if c["kind"] == "group":
+                    service(cid, uid, "left")
+            return {"ok": True}
+
+        if sub == "drop" and method == "POST":          # владелец удаляет группу или канал
+            if not me or me["role"] != "owner" or not public:
+                raise HttpError(403, "owner only")
+            for t in ("messages", "members", "bans"):
+                run(f"DELETE FROM {t} WHERE chat=?", cid)
+            run("DELETE FROM chats WHERE id=?", cid)
             return {"ok": True}
 
         if sub == "members" and method == "GET":
-            rows = q("SELECT user, role FROM members WHERE chat=? ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END LIMIT 200", cid)
-            return {"members": [{**user_card(r["user"]), "role": r["role"]} for r in rows]}
+            rows = q("""SELECT user, role, title, rights FROM members WHERE chat=?
+                        ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, joined LIMIT 300""", cid)
+            return {"members": [{**user_card(r["user"]), "role": r["role"], "title": r["title"] or "", "rights": jload(r["rights"], {})} for r in rows],
+                    "banned": [user_card(r["user"]) for r in q("SELECT user FROM bans WHERE chat=? LIMIT 100", cid)] if can(c, me, "ban") else []}
 
-        if sub == "admin" and method == "POST":     # владелец назначает админа канала или группы
-            if not me or me["role"] != "owner":
-                raise HttpError(403, "owner only")
-            target, on = int(body.get("user") or 0), bool(body.get("on"))
-            run("UPDATE members SET role=? WHERE chat=? AND user=? AND role<>'owner'", "admin" if on else "member", cid, target)
+        if sub == "admin" and method == "POST":     # назначить или снять админа, задать права и префикс
+            if not can(c, me, "promote"):
+                raise HttpError(403, "no rights")
+            target = int(body.get("user") or 0)
+            tm = member(cid, target)
+            if not tm or tm["role"] == "owner" or target == uid:
+                raise HttpError(400, "bad target")
+            if body.get("demote"):
+                run("UPDATE members SET role='member', rights=NULL, title=NULL WHERE chat=? AND user=?", cid, target)
+                return {"ok": True}
+            want = body.get("rights") if isinstance(body.get("rights"), dict) else DEFAULT_ADMIN
+            # админ не может выдать права, которых нет у него самого
+            rights = {r: bool(want.get(r)) and (me["role"] == "owner" or bool(me["rights"].get(r))) for r in ADMIN_RIGHTS}
+            run("UPDATE members SET role='admin', rights=?, title=? WHERE chat=? AND user=?",
+                json.dumps(rights), clean(body.get("title"), 16) or None, cid, target)
             return {"ok": True}
+
+        if sub == "title" and method == "POST":     # префикс обычного участника группы
+            if not can(c, me, "promote"):
+                raise HttpError(403, "no rights")
+            target = int(body.get("user") or 0)
+            run("UPDATE members SET title=? WHERE chat=? AND user=? AND role<>'owner'", clean(body.get("title"), 16) or None, cid, target)
+            if target == uid and me["role"] == "owner":
+                run("UPDATE members SET title=? WHERE chat=? AND user=?", clean(body.get("title"), 16) or None, cid, uid)
+            return {"ok": True}
+
+        if sub == "ban" and method == "POST":       # удалить участника, по желанию с запретом вернуться
+            if not can(c, me, "ban"):
+                raise HttpError(403, "no rights")
+            target = int(body.get("user") or 0)
+            tm = member(cid, target)
+            if body.get("unban"):
+                run("DELETE FROM bans WHERE chat=? AND user=?", cid, target)
+                return {"ok": True}
+            if not tm or tm["role"] == "owner" or target == uid or (tm["role"] == "admin" and me["role"] != "owner"):
+                raise HttpError(400, "bad target")
+            run("DELETE FROM members WHERE chat=? AND user=?", cid, target)
+            if body.get("ban"):
+                run("INSERT OR IGNORE INTO bans (chat, user) VALUES (?, ?)", cid, target)
+            if c["kind"] == "group":
+                service(cid, uid, "removed", target=target, name=user_card(target)["name"])
+            return {"ok": True}
+
+        if sub == "share" and method == "POST":     # красивое приглашение для пересылки в Telegram
+            limit(uid, "share", 20, 3600)
+            if not public:
+                raise HttpError(400, "bad chat")
+            img = save_jpeg(body.get("image"), 900_000)
+            card = chat_card(c)
+            link = f"https://t.me/{BOT_NAME}?start=chat_{cid}"
+            kind = "Канал" if c["kind"] == "channel" else "Группа"
+            caption = f"{kind} «{c['title']}» в DuckChance" + (f"\n{c['about']}" if c["about"] else "") + f"\nВладелец: {card['owner']['name']}"
+            result = {"type": "photo", "id": f"c{cid}x{now}", "photo_url": img, "thumbnail_url": img, "caption": caption[:1000],
+                      "reply_markup": {"inline_keyboard": [[{"text": "Открыть" if c["kind"] == "channel" else "Вступить", "url": link}]]}}
+            r = tg_call("savePreparedInlineMessage", user_id=uid, result=result, allow_user_chats=True, allow_group_chats=True,
+                        allow_channel_chats=True, allow_bot_chats=False)
+            return {"id": r["result"]["id"], "link": link}
 
     if p == ["gift", "send"] and method == "POST":
         limit(uid, "gift", 10, 60)
@@ -324,7 +667,7 @@ def api(method, path, uid, body, query):
         if to == uid or not GIFT_ID.match(gift) or not q1("SELECT id FROM users WHERE id=?", to):
             raise HttpError(400, "bad gift")
         c = dm_chat(uid, to)
-        mid = post_message(c["id"], uid, clean(body.get("text"), 200), gift)
+        mid = post_message(c["id"], uid, clean(body.get("text"), 255), gift, kind="gift", data={"to": to})
         run("INSERT INTO transfers (from_user, to_user, gift, msg, created) VALUES (?, ?, ?, ?, ?)", uid, to, gift, mid, now)
         return {"chat": c["id"], "message": msg_out(q1("SELECT * FROM messages WHERE id=?", mid), {})}
 
@@ -374,11 +717,27 @@ class Handler(BaseHTTPRequestHandler):
         self.cors()
         self.end_headers()
 
+    def serve_media(self, name):
+        path = os.path.join(MEDIA, name)
+        if not MEDIA_NAME.match(name) or not os.path.exists(path):
+            return self.reply(404, {"error": "not found"})
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
     def handle_api(self, method):
         try:
             url = urllib.parse.urlparse(self.path)
             if url.path == "/health":
                 return self.reply(200, {"ok": True})
+            if url.path.startswith("/media/") and method == "GET":
+                return self.serve_media(url.path[7:])
             if not url.path.startswith("/api/"):
                 raise HttpError(404, "not found")
             auth = self.headers.get("Authorization", "")
@@ -392,7 +751,8 @@ class Handler(BaseHTTPRequestHandler):
             body = {}
             if method == "POST":
                 n = int(self.headers.get("Content-Length") or 0)
-                if n > 16384:
+                big = url.path in ("/api/upload",) or url.path.endswith("/share")
+                if n > (1_300_000 if big else 32768):
                     raise HttpError(413, "too big")
                 body = json.loads(self.rfile.read(n) or b"{}") if n else {}
                 if not isinstance(body, dict):
@@ -400,8 +760,11 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, api(method, url.path, uid, body, urllib.parse.parse_qs(url.query)))
         except HttpError as e:
             self.reply(e.code, {"error": e.text})
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError):
             self.reply(400, {"error": "bad request"})
+        except urllib.error.HTTPError as e:
+            print("Telegram отказал:", e.read()[:300], flush=True)
+            self.reply(502, {"error": "telegram"})
         except Exception as e:
             print("Ошибка:", repr(e), flush=True)
             self.reply(500, {"error": "server error"})

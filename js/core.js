@@ -419,7 +419,7 @@
   }
   scrim.addEventListener("click", () => closeSheet());
   all("[data-close]").forEach((b) => b.addEventListener("click", () => closeSheet()));
-  if (inTg) try { tg.BackButton.onClick(() => (sheetEl ? closeSheet() : App.onBack && App.onBack())); } catch {}
+  if (inTg) try { tg.BackButton.onClick(() => (sheetEl ? (App.sheetBack && App.sheetBack(sheetEl)) || closeSheet() : App.onBack && App.onBack())); } catch {}
 
   // ---------- баланс ----------
   let shownBalance = state.balance;

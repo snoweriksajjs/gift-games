@@ -15,7 +15,7 @@ API = f"https://api.telegram.org/bot{TOKEN}/"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 CODE_KEY = os.environ.get("CODE_KEY", "duckchance-codes-v1")   # тот же ключ, что в js/core.js
 REF_BONUS = int(os.environ.get("REF_BONUS", "100"))
-VER = os.environ.get("APP_VER", "14")
+VER = os.environ.get("APP_VER", "15")
 LOG = os.environ.get("PAY_LOG", "payments.log")
 SEEN = os.environ.get("SEEN_FILE", "seen_users.json")
 
