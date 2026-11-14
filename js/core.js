@@ -1073,7 +1073,7 @@
     stake, stakeValue, takeStake, stakeChips, renderStake, renderBalance,
     showPrize, showMiss, log, renderFeed, renderTasks, renderProfile, openGift, setCta,
     locked, invTile, bannerLook, tg, BOT_USERNAME, get tab() { return tab; }, applyReward, buyStars, live: null,
-    registerMode(name, m) { modes[name] = m; }, showMode, start,
+    registerMode(name, m) { modes[name] = m; }, get modes() { return modes; }, showMode, start,
     mode: null, modeName: "", busy: false, pressed: false,
   };
 })();

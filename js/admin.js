@@ -76,7 +76,7 @@
   let uq = "", usort = "seen";
   async function users() {
     body().innerHTML = `<div class="adm-tools"><input id="admQ" type="search" placeholder="Имя, @ник или ID" value="${esc(uq)}">
-        <select id="admSort"><option value="seen">Недавние</option><option value="balance">По балансу</option><option value="new">Новые</option></select></div>
+        <select id="admSort"><option value="seen">Недавние</option><option value="balance">По балансу</option><option value="new">Новые</option><option value="rtp">Свои шансы</option></select></div>
       <div id="admUsers"><div class="adm-load"><span class="spin"></span></div></div>`;
     $("#admSort").value = usort;
     let t = null;
@@ -86,10 +86,11 @@
     list();
     async function list() {
       let d;
-      try { d = await api("GET", `/api/admin/users?q=${encodeURIComponent(uq)}&sort=${usort}`); } catch (e) { return fail(e); }
+      const rtpOnly = usort === "rtp";
+      try { d = await api("GET", `/api/admin/users?q=${encodeURIComponent(uq)}&sort=${rtpOnly ? "seen" : usort}${rtpOnly ? "&filter=rtp" : ""}`); } catch (e) { return fail(e); }
       $("#admUsers").innerHTML = `<p class="adm-note">Всего игроков: ${fmt(d.total)}</p><section class="list">${d.users.map((u) =>
         `<button class="row adm-user" data-uid="${u.id}"><span class="ava sm2 tint" style="--h:${(u.id * 47) % 360};${u.photo ? `background-image:url('${esc(u.photo)}')` : ""}">${u.photo ? "" : esc(u.name.charAt(0))}</span>
-          <span class="grow"><b>${esc(u.name)}${u.banned ? ` <i class="adm-tag bad">бан</i>` : ""}</b><span>${u.handle ? "@" + esc(u.handle) : u.tg_username ? "tg @" + esc(u.tg_username) : "ID " + u.id} · ${ago(u.seen)}</span></span>
+          <span class="grow"><b>${esc(u.name)}${u.banned ? ` <i class="adm-tag bad">бан</i>` : ""}${u.own_rtp ? ` <i class="adm-tag rtp">свои шансы</i>` : ""}</b><span>${u.handle ? "@" + esc(u.handle) : u.tg_username ? "tg @" + esc(u.tg_username) : "ID " + u.id} · ${ago(u.seen)}</span></span>
           <b class="adm-bal">${STAR}${fmt(u.balance)}</b></button>`).join("") || `<div class="row">Никого не нашли</div>`}</section>`;
     }
   }
@@ -104,6 +105,13 @@
       <div class="adm-card"><span class="ava lg tint" style="--h:${(u.id * 47) % 360};${u.photo ? `background-image:url('${esc(u.photo)}')` : ""}">${u.photo ? "" : esc(u.name.charAt(0))}</span>
         <b>${esc(u.name)}${u.banned ? ` <i class="adm-tag bad">бан</i>` : ""}</b><span>${u.handle ? "@" + esc(u.handle) + " · " : ""}${u.tg_username ? "tg @" + esc(u.tg_username) + " · " : ""}ID <span class="adm-copy" data-copy="${u.id}">${u.id}</span></span><span>${ago(u.seen)}</span></div>
       <div class="adm-grid">${[[`${STAR}${fmt(u.balance)}`, "баланс"], [gifts.length, "подарков"], [u.staked, "в стейкинге"], [u.messages, "сообщений"]].map(([v, l]) => `<div class="adm-kpi"><b>${v}</b><span>${l}</span></div>`).join("")}</div>
+      <h4 class="adm-h">Шансы игрока ${u.rtp ? `<i class="adm-tag rtp">свои</i>` : `<i class="adm-tag">как у всех</i>`}</h4>
+      <section class="list adm-form">
+        <div class="adm-mode"><span class="grow"><b>Общий RTP игрока</b></span><input id="auRtpAll" type="number" inputmode="numeric" min="50" max="99" placeholder="—" value="${u.rtp && u.rtp.all ? Math.round(u.rtp.all * 100) : ""}"><i>%</i></div>
+        ${Object.keys(MODES).map((m) => `<div class="adm-mode"><span class="grow">${MODES[m]}</span><input type="number" inputmode="numeric" min="50" max="99" data-urtp="${m}" placeholder="${Math.round(u.rtp_effective[m] * 100)}" value="${u.rtp && u.rtp.modes && u.rtp.modes[m] ? Math.round(u.rtp.modes[m] * 100) : ""}"><i>%</i></div>`).join("")}
+        <p class="adm-note">Серым показано, что действует сейчас. Пустое поле: режим берёт общий RTP игрока, а если его нет, общие настройки. У игрока меняется в течение минуты.</p>
+        <div class="adm-btns"><button data-act="rtp" class="main">Сохранить шансы</button>${u.rtp ? `<button data-act="rtpreset">Как у всех</button>` : ""}</div>
+      </section>
       <h4 class="adm-h">Баланс</h4>
       <section class="list adm-form"><div class="adm-row2"><input id="auAmount" type="number" inputmode="numeric" placeholder="Сумма"><input id="auWager" type="number" inputmode="decimal" placeholder="Отыгрыш ×"></div>
         <input id="auNote" placeholder="Подпись для игрока, например «Бонус от админа»">
@@ -128,6 +136,14 @@
         if (a === "set") { if (n < 0) return; await api("POST", `/api/admin/user/${id}/grant`, { kind: "set", amount: n, note }); toast("Баланс будет установлен"); }
         if (a === "gift") { await api("POST", `/api/admin/user/${id}/grant`, { kind: "gift", gift: $("#auGift").value, wager, note }); toast("Подарок поставлен в выдачу"); }
         if (a === "msg") { const t = $("#auMsg").value.trim(); if (!t) return; await api("POST", `/api/admin/user/${id}/message`, { text: t }); toast("Отправлено"); }
+        if (a === "rtp") {
+          const allv = Number($("#auRtpAll").value), modes = {};
+          all("[data-urtp]", body()).forEach((i) => { const v = Number(i.value); if (v >= 50 && v <= 99) modes[i.dataset.urtp] = v / 100; });
+          if (allv && (allv < 50 || allv > 99)) return toast("RTP от 50 до 99%");
+          await api("POST", `/api/admin/user/${id}/rtp`, { all: allv ? allv / 100 : 0, modes });
+          toast(allv || Object.keys(modes).length ? "Шансы игрока сохранены" : "Шансы как у всех");
+        }
+        if (a === "rtpreset") { await api("POST", `/api/admin/user/${id}/rtp`, { reset: true }); toast("Шансы как у всех"); }
         if (a === "ban") { if (!u.banned && !confirm(`Заблокировать ${u.name}?`)) return; await api("POST", `/api/admin/user/${id}/ban`, { on: !u.banned }); toast(u.banned ? "Разблокирован" : "Заблокирован"); }
         hap.win(); userCard(id);
       } catch (er) { fail(er); }

@@ -94,5 +94,6 @@
     onStake() { if (!running && (A.stakeValue() || !wins)) render(); else if (!running) A.setCta({ html: "Выберите ставку", disabled: true, fn: play }); },
     lockStake() { return running; },
     get P() { return P; },
+    chanceNow: () => chanceOf(A.rtp("streak")),
   });
 })();

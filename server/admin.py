@@ -39,6 +39,7 @@ def bind(g):
     CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, admin INTEGER, action TEXT, data TEXT, at INTEGER);
     """)
     g["add_column"]("users", "banned", "INTEGER")
+    g["add_column"]("users", "rtp", "TEXT")          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
 
 
 q = lambda *a: G["q"](*a)
@@ -64,13 +65,31 @@ def log(admin, action, data):
     run("INSERT INTO admin_log (admin, action, data, at) VALUES (?, ?, ?, ?)", admin, action, json.dumps(data, ensure_ascii=False)[:2000], int(time.time()))
 
 
+def personal_rtp(uid):
+    r = q1("SELECT rtp FROM users WHERE id=?", uid)
+    try:
+        return json.loads(r["rtp"]) if r and r.get("rtp") else None
+    except ValueError:
+        return None
+
+
+def effective_rtp(s, mine):
+    """Шанс по режимам: личный режим, потом личный общий, потом режим для всех, потом общий."""
+    mine = mine or {}
+    out = {}
+    for m in MODES:
+        out[m] = (mine.get("modes") or {}).get(m) or mine.get("all") or (s.get("modes") or {}).get(m) or s["rtp"]
+    return mine.get("all") or s["rtp"], out
+
+
 def public_config(uid):
     s = settings()
+    base, modes = effective_rtp(s, personal_rtp(uid))
     tasks = q("SELECT id, title, kind, target, reward FROM tasks WHERE active=1 ORDER BY id")
     done = {r["task"] for r in q("SELECT task FROM task_done WHERE user=?", uid)}
     for t in tasks:
         t["done"] = t["id"] in done
-    return {"rtp": s["rtp"], "modes": s["modes"], "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
+    return {"rtp": base, "modes": modes, "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
             "maintenance": s["maintenance"] and uid not in ADMINS, "maint_text": s["maint_text"], "withdraw_note": s["withdraw_note"],
             "tasks": tasks, "admin": uid in ADMINS}
 
@@ -126,6 +145,9 @@ def user_full(uid):
     if not u:
         raise err(404, "no user")
     card = G["user_card"](uid, True)
+    mine = personal_rtp(uid)
+    card["rtp"] = mine
+    card["rtp_effective"] = effective_rtp(settings(), mine)[1]
     card.update({"balance": u.get("balance") or 0, "staked": u.get("staked") or 0, "banned": bool(u.get("banned")),
                  "tg_username": u.get("username") or "",
                  "chats": (q1("SELECT COUNT(*) n FROM members WHERE user=?", uid) or {}).get("n", 0),
@@ -230,15 +252,17 @@ def handle(method, p, uid, body, query, now):
         s = G["clean"](query.get("q", [""])[0], 40).lstrip("@").lower()
         sort = {"seen": "seen DESC", "balance": "balance DESC", "new": "rowid DESC"}.get(query.get("sort", ["seen"])[0], "seen DESC")
         off = int(query.get("offset", ["0"])[0] or 0)
-        if s:
+        if query.get("filter", [""])[0] == "rtp":          # только игроки со своими шансами
+            rows = q(f"SELECT id FROM users WHERE rtp IS NOT NULL ORDER BY {sort} LIMIT 50 OFFSET ?", off)
+        elif s:
             like = f"%{s}%"
             rows = q(f"SELECT id FROM users WHERE ulower(name) LIKE ? OR ulower(handle) LIKE ? OR ulower(username) LIKE ? OR CAST(id AS TEXT)=? ORDER BY {sort} LIMIT 50 OFFSET ?", like, like, like, s, off)
         else:
             rows = q(f"SELECT id FROM users ORDER BY {sort} LIMIT 50 OFFSET ?", off)
         out = []
         for r in rows:
-            uu = q1("SELECT balance, banned, username FROM users WHERE id=?", r["id"])
-            out.append(G["user_card"](r["id"]) | {"balance": uu["balance"] or 0, "banned": bool(uu["banned"]), "tg_username": uu["username"] or ""})
+            uu = q1("SELECT balance, banned, username, rtp FROM users WHERE id=?", r["id"])
+            out.append(G["user_card"](r["id"]) | {"balance": uu["balance"] or 0, "banned": bool(uu["banned"]), "tg_username": uu["username"] or "", "own_rtp": bool(uu["rtp"])})
         return {"users": out, "total": (q1("SELECT COUNT(*) n FROM users") or {}).get("n", 0)}
 
     if len(a) >= 2 and a[0] == "user":
@@ -257,6 +281,21 @@ def handle(method, p, uid, body, query, now):
                 tid, kind, amount, gift, num(body.get("wager"), 0, 50), G["clean"](body.get("note"), 120), now)
             log(uid, "grant", {"user": tid, "kind": kind, "amount": amount, "gift": gift})
             return {"ok": True}
+        if a[2:] == ["rtp"] and method == "POST":      # личные шансы игрока
+            if body.get("reset"):
+                run("UPDATE users SET rtp=NULL WHERE id=?", tid)
+                log(uid, "rtp", {"user": tid, "reset": True})
+                return {"ok": True, "rtp": None}
+            mine = {}
+            if body.get("all"):
+                mine["all"] = round(num(body["all"], 0.5, 0.99, 0.95), 3)
+            if isinstance(body.get("modes"), dict):
+                mm = {m: round(num(v, 0.5, 0.99, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v}
+                if mm:
+                    mine["modes"] = mm
+            run("UPDATE users SET rtp=? WHERE id=?", json.dumps(mine) if mine else None, tid)
+            log(uid, "rtp", {"user": tid, **mine})
+            return {"ok": True, "rtp": mine or None}
         if a[2:] == ["ban"] and method == "POST":
             run("UPDATE users SET banned=? WHERE id=?", 1 if body.get("on") else None, tid)
             log(uid, "ban", {"user": tid, "on": bool(body.get("on"))})

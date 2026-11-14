@@ -6,10 +6,11 @@
   const targetSheet = $("#targetSheet"), shopGrid = $("#shopGrid"), shopSearch = $("#shopSearch"), shopSort = $("#shopSort"), priceSeg = $("#priceSeg");
   let dial, target = null, gotId = null, activeMult = null, priceRange = "all", spinning = false;
 
+  const chanceFor = (v, price) => Math.min(MAX_CHANCE, (v / price) * A.rtp("classic"));
   const chance = () => {
     const v = A.stakeValue();
     if (!target || v <= 0) return 0;
-    return Math.min(MAX_CHANCE, (v / A.byId[target].price) * A.rtp("classic"));
+    return chanceFor(v, A.byId[target].price);
   };
 
   function renderShop() {
@@ -77,6 +78,7 @@
   }
 
   A.registerMode("classic", {
+    chanceFor, MAX_CHANCE,           // для проверки шансов
     init() {
       dial = new A.Dial($("#dialClassic"));
       $("#outSlot").addEventListener("click", () => A.openSheet(targetSheet));
