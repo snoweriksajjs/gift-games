@@ -25,7 +25,7 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "16")
+VER = os.environ.get("APP_VER", "18")
 BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
@@ -72,7 +72,7 @@ def add_column(table, col, decl):
 
 
 # новые поля поверх первой версии базы
-for t, c, d in [("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
+for t, c, d in [("users", "balance", "INTEGER"), ("users", "staked", "INTEGER"), ("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
                 ("chats", "photo", "TEXT"), ("chats", "look", "TEXT"), ("chats", "handle", "TEXT"),
                 ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"),
                 ("members", "title", "TEXT"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
@@ -367,6 +367,9 @@ def api(method, path, uid, body, query):
             sets.append(("look", json.dumps(clean_look(body["look"]))))
         if isinstance(body.get("gifts"), list):
             sets.append(("gifts", json.dumps([g for g in body["gifts"] if isinstance(g, str) and GIFT_ID.match(g)][:60])))
+        for k in ("balance", "staked"):       # для баннера профиля в боте; считается на устройстве
+            if isinstance(body.get(k), int) and 0 <= body[k] < 10**12:
+                sets.append((k, body[k]))
         if body.get("bio") is not None:
             sets.append(("bio", clean(body["bio"], 140)))
         for k, v in sets:

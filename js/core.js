@@ -836,6 +836,7 @@
     const open = q.get("open");
     if (open === "egg" && modes.egg) setTimeout(() => showMode("egg"), 300);
     if (open === "chats") setTimeout(() => showTab("pageChats"), 300);
+    if (open === "profile") setTimeout(() => showTab("pageProfile"), 300);
     const code = q.get("code");
     if (code) setTimeout(() => redeemCode(code, (state.codes || []).includes(code)), 1400);
   }

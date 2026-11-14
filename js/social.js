@@ -1219,12 +1219,14 @@
     if (!canUse) return;
     clearTimeout(lookT);
     lookT = setTimeout(() => {
-      const body = { look: A.bannerLook(), gifts: giftIds() }, j = JSON.stringify(body);
+      const body = { look: A.bannerLook(), gifts: giftIds(), balance: Math.floor(st().balance), staked: st().inv.filter((x) => x.stake).length }, j = JSON.stringify(body);
       if (j === sent && !force) return;
       call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; paintHandle(); if (r.pending) claimIncoming(); }).catch(() => {});
     }, force ? 0 : 1200);
   }
   A.onLook = () => syncMe(false);
+  setInterval(() => syncMe(false), 30000);                                   // баланс меняется в играх
+  document.addEventListener("visibilitychange", () => { if (document.hidden) syncMe(true); });
   function closeViewer() { const v = $("#viewer"); v.classList.remove("on"); setTimeout(() => (v.hidden = true), 200); }
   A.onBack = () => { if (!ctx.hidden) return hideMenu(); if (!$("#viewer").hidden) return closeViewer(); closeChat(); };
   A.onTab = (id) => {

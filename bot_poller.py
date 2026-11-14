@@ -1,17 +1,21 @@
-"""Бот DuckChance: приветствие и меню, команды, оплата звёздами, приглашения, напоминания о бесплатном яйце.
+"""Бот DuckChance: меню из трёх кнопок, анимированный баннер профиля, поддержка, оплата звёздами,
+приглашения и напоминания о бесплатном яйце.
 
 Запуск:  TG_TOKEN=<токен бота> python3 bot_poller.py
 Telegram ждёт ответ на pre_checkout_query не дольше 10 секунд, поэтому бот должен работать постоянно.
 Токен в код не вписывается, он берётся из переменной окружения.
 
-Приглашения: игрок делится ссылкой t.me/<бот>?start=ref_<его id>. Когда по ней впервые
-приходит новый человек, бот присылает пригласившему кнопку с подписанным кодом бонуса.
-Приложение проверяет подпись и начисляет звёзды.
+Меню: «Играть» открывает приложение, «Поддержка» принимает вопрос и пересылает его админам
+(админ отвечает ответом на пересланное сообщение, бот возвращает ответ игроку), «Профиль» присылает
+анимированный баннер: обложка, рамка, баланс и лучшие подарки (рисует server/profile_card.py).
 
-Напоминания: раз в день в 12:00 по Москве бот пишет тем, кто запускал его и не заходил в приложение
-больше 20 часов, что бесплатное яйцо готово. Отключить: /stop, включить снова: /remind.
+Премиум-эмодзи с утками работают, если у владельца бота есть Telegram Premium. Если Telegram их не примет,
+бот сам переходит на обычные эмодзи.
+
+Приглашения: ссылка t.me/<бот>?start=ref_<id>. За нового человека пригласивший получает кнопку с бонусом.
+Напоминания: раз в день в 12:00 по Москве тем, кто давно не заходил. /stop выключает, /remind включает.
 """
-import hashlib, hmac, json, os, sqlite3, sys, threading, time, urllib.error, urllib.request, urllib.parse
+import hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.error, urllib.request, urllib.parse, uuid
 from datetime import datetime, timedelta, timezone
 
 TOKEN = os.environ.get("TG_TOKEN") or sys.exit("Нужна переменная окружения TG_TOKEN")
@@ -20,45 +24,114 @@ SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 BANNER = os.environ.get("BANNER", "https://snoweriksajjs.github.io/gift-games/img/logo-banner.jpg")
 CODE_KEY = os.environ.get("CODE_KEY", "duckchance-codes-v1")   # тот же ключ, что в js/core.js
 REF_BONUS = int(os.environ.get("REF_BONUS", "100"))
-VER = os.environ.get("APP_VER", "16")
+VER = os.environ.get("APP_VER", "18")
 LOG = os.environ.get("PAY_LOG", "payments.log")
 SEEN = os.environ.get("SEEN_FILE", "seen_users.json")
 STATE = os.environ.get("BOT_STATE", os.path.join(os.path.dirname(os.path.abspath(SEEN)), "bot_state.json"))
-DB = os.environ.get("DB", "")          # база сервера: из неё видно, кто давно не заходил
+DB = os.environ.get("DB", "")          # база сервера: профиль, баланс, кто давно не заходил
+ADMINS = [int(x) for x in os.environ.get("ADMIN_IDS", "8083284748").split(",") if x.strip().isdigit()]
 MSK = timezone(timedelta(hours=3))
 REMIND_HOUR = 12
 
+# утиные премиум-эмодзи из набора UtyaDuckEmojis
+DUCK = {"hi": ("👋", "5258029913021119781"), "money": ("🤑", "5260436911478043287"), "fire": ("🔥", "5258044395650841388"),
+        "party": ("🥳", "5260515582394005038"), "cool": ("😎", "5260256767664747296"), "strong": ("💪", "5260237109599431823"),
+        "love": ("🫶", "5258183535411360332"), "think": ("🤔", "5260486002954237511"), "wow": ("🍾", "5260414358604771183"),
+        "ok": ("👌", "5260429575673902036"), "point": ("🫵", "5260324447759402046"), "heart": ("❤️", "5260634973894900408")}
+premium = {"text": True, "buttons": True}     # снимается, если Telegram откажет
+
+
+def e(name):
+    ch, eid = DUCK[name]
+    return f'<tg-emoji emoji-id="{eid}">{ch}</tg-emoji>'
+
+
 COMMANDS = [
     {"command": "play", "description": "Открыть DuckChance"},
+    {"command": "profile", "description": "Мой профиль"},
     {"command": "egg", "description": "Бесплатное яйцо дня"},
-    {"command": "chats", "description": "Чаты, группы и каналы"},
     {"command": "invite", "description": "Пригласить друга и получить звёзды"},
+    {"command": "support", "description": "Написать в поддержку"},
     {"command": "help", "description": "Как играть"},
     {"command": "stop", "description": "Выключить напоминания"},
 ]
 
-WELCOME = ("<b>DuckChance</b>: игры на подарки Telegram за звёзды.\n\n"
-           "Апгрейд, серия, контракт, арена, краш и утиные яйца. Каждый день одно яйцо бесплатно, "
-           "а каждый раунд можно проверить на честность.\n\n"
-           "В чатах можно переписываться с игроками, создавать группы и каналы и дарить друг другу подарки.")
+
+def welcome():
+    return (f"{e('hi')} <b>Добро пожаловать в DuckChance</b>\n\n"
+            "Игры на подарки Telegram за звёзды: <b>апгрейд, серия, контракт, арена, краш</b> и утиные яйца.\n\n"
+            f"{e('party')} Каждый день одно яйцо <b>бесплатно</b>\n"
+            f"{e('cool')} Каждый раунд можно проверить на честность\n"
+            f"{e('love')} Чаты с игроками, группы, каналы и обмен подарками\n\n"
+            "<i>Жмите «Играть», чтобы начать.</i>")
+
 
 HELP = ("<b>Как играть</b>\n\n"
-        "<b>Апгрейд.</b> Ставите подарок или звёзды, выбираете подарок дороже. Чем больше разница, тем меньше шанс.\n"
+        "<b>Апгрейд.</b> Ставите подарок или звёзды и выбираете подарок дороже. Чем больше разница, тем меньше шанс.\n"
         "<b>Серия.</b> Одна ставка, круг крутится сам. Каждая победа удваивает приз, первый промах заканчивает игру.\n"
         "<b>Контракт.</b> Отдаёте от 3 до 10 подарков и получаете один, дешевле или дороже их суммы.\n"
         "<b>Арена.</b> Игроки ставят в общий банк, мяч скачет по полю. Чья территория, тот забирает всё.\n"
         "<b>Краш.</b> Множитель растёт, пока ракета летит. Заберите выигрыш до взрыва.\n"
         "<b>Яйцо.</b> Разбиваете тремя тапами, внутри подарок. Одно яйцо в день бесплатно.\n\n"
-        "Подарки можно продать за звёзды, передать другу или отправить в стейкинг. "
-        "Звёзды выводить нельзя, только подарки.")
+        "<blockquote>Подарки можно продать за звёзды, передать другу или отправить в стейкинг. "
+        "Звёзды выводить нельзя, только подарки.</blockquote>")
 
 lock = threading.Lock()
 
 
+# ---------- запросы к Telegram ----------
 def call(method, **params):
     data = urllib.parse.urlencode({k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else v for k, v in params.items()}).encode()
     with urllib.request.urlopen(API + method, data=data, timeout=70) as r:
         return json.load(r)["result"]
+
+
+def call_file(method, field, path, **params):
+    """Отправка файла: multipart/form-data без сторонних библиотек."""
+    b = uuid.uuid4().hex
+    parts = []
+    for k, v in params.items():
+        v = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else str(v)
+        parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
+    with open(path, "rb") as f:
+        parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{os.path.basename(path)}"\r\nContent-Type: video/mp4\r\n\r\n'.encode() + f.read() + b"\r\n")
+    parts.append(f"--{b}--\r\n".encode())
+    req = urllib.request.Request(API + method, data=b"".join(parts), headers={"Content-Type": f"multipart/form-data; boundary={b}"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r)["result"]
+
+
+def strip_premium(params):
+    """Убирает премиум-эмодзи из текста и оформление кнопок."""
+    out = dict(params)
+    for k in ("text", "caption"):
+        if k in out:
+            out[k] = re.sub(r'<tg-emoji emoji-id="\d+">(.*?)</tg-emoji>', r"\1", out[k])
+    kb = out.get("reply_markup")
+    if isinstance(kb, dict) and "inline_keyboard" in kb:
+        out["reply_markup"] = {"inline_keyboard": [[{k: v for k, v in btn.items() if k not in ("style", "icon_custom_emoji_id")} for btn in row] for row in kb["inline_keyboard"]]}
+    return out
+
+
+def tg(method, file=None, **params):
+    """Отправка с премиум-эмодзи; если Telegram их не принимает, повтор без них и дальше без них."""
+    send_fn = (lambda p: call_file(method, file[0], file[1], **p)) if file else (lambda p: call(method, **p))
+    if not premium["text"]:
+        params = strip_premium(params)
+    try:
+        return send_fn(params)
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", "ignore")
+        if err.code == 400 and premium["text"] and params != strip_premium(params):   # любая ошибка 400 при оформлении: пробуем без него
+            res = send_fn(strip_premium(params))      # без оформления прошло: значит, дело было в нём
+            print("Премиум-эмодзи недоступны, перехожу на обычные:", body[:160], flush=True)
+            premium["text"] = False
+            return res
+        raise urllib.error.HTTPError(err.url, err.code, body, err.headers, None)
+
+
+def send(chat, text, **kw):
+    return tg("sendMessage", chat_id=chat, text=text, parse_mode="HTML", **kw)
 
 
 def make_code(kind, amount, nonce):
@@ -70,8 +143,13 @@ def app_url(**query):
     return f"{SITE}?{urllib.parse.urlencode({'v': VER, **query})}"
 
 
-def app_btn(text, **query):
-    return {"text": text, "web_app": {"url": app_url(**query)}}
+def app_btn(text, icon=None, style=None, **query):
+    b = {"text": text, "web_app": {"url": app_url(**query)}}
+    if icon:
+        b["icon_custom_emoji_id"] = DUCK[icon][1]
+    if style:
+        b["style"] = style
+    return b
 
 
 def play_button(text, **query):
@@ -89,16 +167,15 @@ def share_url(uid):
     return "https://t.me/share/url?" + urllib.parse.urlencode({"url": link, "text": "Залетай в DuckChance: игры на подарки Telegram за звёзды"})
 
 
-def main_menu(uid, ref=""):
+def main_menu(ref=""):
     return {"inline_keyboard": [
-        [app_btn("Играть", **({"ref": ref} if ref else {}))],
-        [app_btn("Бесплатное яйцо", open="egg"), app_btn("Чаты", open="chats")],
-        [{"text": f"Пригласить друга (+{REF_BONUS} звёзд)", "url": share_url(uid)}],
-        [{"text": "Как играть", "callback_data": "help"}],
+        [app_btn("Играть", icon="fire", style="primary", **({"ref": ref} if ref else {}))],
+        [{"text": "Поддержка", "callback_data": "support", "icon_custom_emoji_id": DUCK["think"][1]},
+         {"text": "Профиль", "callback_data": "profile", "icon_custom_emoji_id": DUCK["cool"][1]}],
     ]}
 
 
-# ---------- хранение: кто запускал бота, кто выключил напоминания ----------
+# ---------- хранение ----------
 def load_json(path, default):
     try:
         with open(path) as f:
@@ -115,18 +192,132 @@ def save_json(path, data):
 
 
 seen = set(load_json(SEEN, []))
-state = load_json(STATE, {"subs": [], "muted": [], "reminded": ""})
+state = load_json(STATE, {})
+for k, v in {"subs": [], "muted": [], "reminded": "", "tickets": {}, "cards": {}}.items():
+    state.setdefault(k, v)
+waiting_support = {}      # кто сейчас пишет вопрос в поддержку
 
 
 def save_state():
     with lock:
+        if len(state["tickets"]) > 3000:
+            state["tickets"] = dict(list(state["tickets"].items())[-2000:])
+        if len(state["cards"]) > 500:
+            state["cards"] = dict(list(state["cards"].items())[-300:])
         save_json(STATE, state)
 
 
-def send(chat, text, **kw):
-    return call("sendMessage", chat_id=chat, text=text, parse_mode="HTML", **kw)
+# ---------- профиль ----------
+def user_row(uid):
+    if not DB or not os.path.exists(DB):
+        return None
+    try:
+        con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=5)
+        con.row_factory = sqlite3.Row
+        r = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        con.close()
+        return dict(r) if r else None
+    except Exception as err:
+        print("База недоступна:", err, flush=True)
+        return None
 
 
+def fmt(n):
+    return f"{int(n):,}".replace(",", " ")
+
+
+def send_profile(chat, uid, tg_user):
+    row = user_row(uid)
+    if not row:
+        send(chat, f"{e('think')} Профиль появится, когда вы откроете DuckChance хотя бы раз.", reply_markup=play_button("Открыть DuckChance"))
+        return
+    try:
+        call("sendChatAction", chat_id=chat, action="upload_video")
+    except Exception:
+        pass
+    try:
+        look = json.loads(row.get("look") or "null") or {}
+    except ValueError:
+        look = {}
+    try:
+        gifts = json.loads(row.get("gifts") or "[]")
+    except ValueError:
+        gifts = []
+    data = {"name": row.get("name") or tg_user.get("first_name") or "Игрок", "handle": row.get("handle") or "",
+            "photo": row.get("photo") or "", "look": look, "balance": int(row.get("balance") or 0),
+            "gifts": gifts, "staked": int(row.get("staked") or 0)}
+    import profile_card
+    cat = profile_card._catalog()
+    value = sum(cat[g]["price"] for g in gifts if g in cat)
+    caption = (f"{e('cool')} <b>{escape(data['name'])}</b>" + (f"  <i>@{escape(data['handle'])}</i>" if data["handle"] else "") + "\n\n"
+               f"{e('money')} Баланс: <b>{fmt(data['balance'])} ⭐</b>\n"
+               f"{e('party')} Подарков: <b>{len([g for g in gifts if g in cat])}</b> на <b>{fmt(value)} ⭐</b>\n"
+               + (f"{e('strong')} В стейкинге: <b>{data['staked']}</b>\n" if data["staked"] else ""))
+    kb = {"inline_keyboard": [[app_btn("Открыть профиль", icon="cool", style="primary", open="profile")],
+                              [{"text": "Обновить", "callback_data": "profile"}]]}
+    key = profile_card._key(data)
+    try:
+        if key in state["cards"]:
+            tg("sendAnimation", chat_id=chat, animation=state["cards"][key], caption=caption, parse_mode="HTML", reply_markup=kb)
+            return
+        path = profile_card.render(data)
+        m = tg("sendAnimation", file=("animation", path), chat_id=chat, caption=caption, parse_mode="HTML", reply_markup=kb,
+               width=profile_card.W, height=profile_card.H)
+        fid = (m.get("animation") or m.get("document") or {}).get("file_id")
+        if fid:
+            state["cards"][key] = fid
+            save_state()
+    except Exception as err:
+        print("Баннер профиля не вышел:", err, flush=True)
+        send(chat, caption, reply_markup=kb)
+
+
+def escape(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ---------- поддержка ----------
+def ask_support(chat, uid):
+    waiting_support[uid] = time.time()
+    send(chat, f"{e('think')} <b>Поддержка DuckChance</b>\n\nНапишите вопрос одним сообщением, можно с фото или скриншотом. Мы ответим прямо здесь.",
+         reply_markup={"inline_keyboard": [[{"text": "Отмена", "callback_data": "support_cancel"}]]})
+
+
+def to_support(m):
+    u = m["from"]
+    head = f"Вопрос в поддержку от <b>{escape(u.get('first_name', ''))}</b>" + (f" @{u['username']}" if u.get("username") else "") + f" (id {u['id']})\n<i>Ответьте на сообщение ниже, и бот перешлёт ответ.</i>"
+    ok = False
+    for admin in ADMINS:
+        try:
+            call("sendMessage", chat_id=admin, text=head, parse_mode="HTML")
+            c = call("copyMessage", chat_id=admin, from_chat_id=m["chat"]["id"], message_id=m["message_id"])
+            state["tickets"][f"{admin}:{c['message_id']}"] = u["id"]
+            ok = True
+        except Exception as err:
+            print("Не удалось передать вопрос админу", admin, err, flush=True)
+    save_state()
+    if ok:
+        send(m["chat"]["id"], f"{e('ok')} Вопрос передан в поддержку. Ответ придёт сюда.")
+    else:
+        send(m["chat"]["id"], "Поддержка сейчас недоступна, попробуйте чуть позже.")
+
+
+def from_support(m):
+    """Админ ответил на пересланный вопрос: возвращаем ответ игроку."""
+    rep = m.get("reply_to_message") or {}
+    uid = state["tickets"].get(f"{m['chat']['id']}:{rep.get('message_id')}")
+    if not uid:
+        return False
+    try:
+        send(uid, f"{e('love')} <b>Ответ поддержки</b>")
+        call("copyMessage", chat_id=uid, from_chat_id=m["chat"]["id"], message_id=m["message_id"])
+        send(m["chat"]["id"], "Ответ отправлен.")
+    except Exception as err:
+        send(m["chat"]["id"], f"Не доставлено: {escape(err)}")
+    return True
+
+
+# ---------- команды ----------
 def on_start(m):
     uid, arg = m["from"]["id"], (m.get("text", "").split(" ", 1) + [""])[1].strip()
     with lock:
@@ -139,39 +330,43 @@ def on_start(m):
     ref = arg[4:] if arg.startswith("ref_") and arg[4:].isdigit() else ""
     chat = arg[5:] if arg.startswith("chat_") and arg[5:].isdigit() else ""
     if chat:   # приглашение в группу или канал внутри приложения
-        send(m["chat"]["id"], "Вас пригласили в чат DuckChance. Откройте, чтобы вступить.", reply_markup=play_button("Открыть чат", chat=chat))
+        send(m["chat"]["id"], f"{e('point')} Вас пригласили в чат DuckChance. Откройте, чтобы вступить.", reply_markup=play_button("Открыть чат", chat=chat))
         return
     try:
-        call("sendPhoto", chat_id=m["chat"]["id"], photo=BANNER, caption=WELCOME, parse_mode="HTML", reply_markup=main_menu(uid, ref))
-    except Exception as e:   # картинка не загрузилась: присылаем текстом
-        print("Баннер не отправился:", e, flush=True)
-        send(m["chat"]["id"], WELCOME, reply_markup=main_menu(uid, ref))
+        tg("sendPhoto", chat_id=m["chat"]["id"], photo=BANNER, caption=welcome(), parse_mode="HTML", reply_markup=main_menu(ref))
+    except Exception as err:   # картинка не загрузилась: присылаем текстом
+        print("Баннер не отправился:", err, flush=True)
+        send(m["chat"]["id"], welcome(), reply_markup=main_menu(ref))
     # бонус пригласившему: только за нового человека и не за самого себя
     if ref and is_new and int(ref) != uid:
         code = make_code("R", REF_BONUS, str(uid))
-        name = m["from"].get("first_name", "Друг")
+        name = escape(m["from"].get("first_name", "Друг"))
         try:
-            send(int(ref), f"{name} пришёл по вашей ссылке. Заберите {REF_BONUS} звёзд.",
+            send(int(ref), f"{e('party')} {name} пришёл по вашей ссылке. Заберите <b>{REF_BONUS} звёзд</b>.",
                  reply_markup=play_button(f"Забрать {REF_BONUS} звёзд", code=code))
             print("Приглашение:", ref, "<-", uid, flush=True)
-        except Exception as e:  # пригласивший мог не запускать бота или заблокировать его
-            print("Не удалось написать пригласившему", ref, e, flush=True)
+        except Exception as err:  # пригласивший мог не запускать бота или заблокировать его
+            print("Не удалось написать пригласившему", ref, err, flush=True)
 
 
 def on_command(m, cmd):
     uid, chat = m["from"]["id"], m["chat"]["id"]
     if cmd == "play":
-        send(chat, "Открыть DuckChance:", reply_markup=play_button("Играть"))
+        send(chat, f"{e('fire')} Открыть DuckChance:", reply_markup=main_menu())
+    elif cmd == "profile":
+        threading.Thread(target=send_profile, args=(chat, uid, m["from"]), daemon=True).start()
     elif cmd == "egg":
-        send(chat, "Каждый день одно яйцо бесплатно, внутри от 30 до 300 звёзд. Разбейте его тремя тапами.",
+        send(chat, f"{e('party')} Каждый день одно яйцо <b>бесплатно</b>, внутри от 30 до 300 звёзд. Разбейте его тремя тапами.",
              reply_markup=play_button("Разбить яйцо", open="egg"))
     elif cmd == "chats":
-        send(chat, "Личные сообщения, группы и каналы игроков. Там же можно подарить подарок.",
+        send(chat, f"{e('love')} Личные сообщения, группы и каналы игроков. Там же можно подарить подарок.",
              reply_markup=play_button("Открыть чаты", open="chats"))
     elif cmd == "invite":
         link = f"https://t.me/{bot_name()}?start=ref_{uid}"
-        send(chat, f"Ваша ссылка:\n{link}\n\nЗа каждого друга, который запустит бота по ней, вы получите {REF_BONUS} звёзд.",
+        send(chat, f"{e('money')} <b>Приглашайте друзей</b>\n\nЗа каждого, кто запустит бота по вашей ссылке, вы получите <b>{REF_BONUS} звёзд</b>.\n\n<code>{link}</code>",
              reply_markup={"inline_keyboard": [[{"text": "Отправить другу", "url": share_url(uid)}]]}, disable_web_page_preview=True)
+    elif cmd == "support":
+        ask_support(chat, uid)
     elif cmd == "help":
         send(chat, HELP, reply_markup=play_button("Играть"))
     elif cmd == "stop":
@@ -184,18 +379,28 @@ def on_command(m, cmd):
         with lock:
             state["muted"] = [x for x in state["muted"] if x != uid]
         save_state()
-        send(chat, "Напоминания включены. Раз в день, когда бесплатное яйцо готово.")
+        send(chat, f"{e('ok')} Напоминания включены. Раз в день, когда бесплатное яйцо готово.")
 
 
 def on_callback(q):
-    call("answerCallbackQuery", callback_query_id=q["id"])
-    if q.get("data") == "help":
-        send(q["message"]["chat"]["id"], HELP, reply_markup=play_button("Играть"))
+    data, chat, uid = q.get("data"), q["message"]["chat"]["id"], q["from"]["id"]
+    call("answerCallbackQuery", callback_query_id=q["id"], **({"text": "Рисуем профиль…"} if data == "profile" else {}))
+    if data == "help":
+        send(chat, HELP, reply_markup=play_button("Играть"))
+    elif data == "profile":
+        threading.Thread(target=send_profile, args=(chat, uid, q["from"]), daemon=True).start()
+    elif data == "support":
+        ask_support(chat, uid)
+    elif data == "support_cancel":
+        waiting_support.pop(uid, None)
+        try:
+            call("deleteMessage", chat_id=chat, message_id=q["message"]["message_id"])
+        except Exception:
+            pass
 
 
 # ---------- напоминание о бесплатном яйце ----------
 def active_recently():
-    """Кто заходил в приложение за последние 20 часов (по базе сервера)."""
     if not DB or not os.path.exists(DB):
         return set()
     try:
@@ -203,8 +408,8 @@ def active_recently():
         rows = con.execute("SELECT id FROM users WHERE seen > ?", (int(time.time()) - 20 * 3600,)).fetchall()
         con.close()
         return {r[0] for r in rows}
-    except Exception as e:
-        print("База недоступна для напоминаний:", e, flush=True)
+    except Exception as err:
+        print("База недоступна для напоминаний:", err, flush=True)
         return set()
 
 
@@ -217,15 +422,14 @@ def remind_loop():
                 state["reminded"] = today
                 save_state()
                 skip = active_recently() | set(state["muted"])
-                targets = [u for u in list(state["subs"]) if u not in skip]
                 sent = gone = 0
-                for uid in targets:
+                for uid in [u for u in list(state["subs"]) if u not in skip]:
                     try:
-                        send(uid, "Бесплатное утиное яйцо уже ждёт. Внутри от 30 до 300 звёзд.\n\n<i>Выключить напоминания: /stop</i>",
-                             reply_markup=play_button("Разбить яйцо", open="egg"), disable_notification=False)
+                        send(uid, f"{e('party')} Бесплатное утиное яйцо уже ждёт. Внутри от 30 до 300 звёзд.\n\n<i>Выключить напоминания: /stop</i>",
+                             reply_markup=play_button("Разбить яйцо", open="egg"))
                         sent += 1
-                    except urllib.error.HTTPError as e:
-                        if e.code == 403:    # человек заблокировал бота: больше не пишем
+                    except urllib.error.HTTPError as err:
+                        if err.code == 403:    # человек заблокировал бота: больше не пишем
                             with lock:
                                 state["subs"] = [x for x in state["subs"] if x != uid]
                             gone += 1
@@ -234,24 +438,25 @@ def remind_loop():
                     time.sleep(0.05)   # не больше 20 сообщений в секунду
                 save_state()
                 print(f"Напоминания: отправлено {sent}, заблокировали {gone}", flush=True)
-        except Exception as e:
-            print("Ошибка напоминаний:", e, flush=True)
+        except Exception as err:
+            print("Ошибка напоминаний:", err, flush=True)
         time.sleep(300)
 
 
 def main():
     offset = 0
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         call("setMyCommands", commands=COMMANDS)
-    except Exception as e:
-        print("Команды не установлены:", e, flush=True)
+    except Exception as err:
+        print("Команды не установлены:", err, flush=True)
     threading.Thread(target=remind_loop, daemon=True).start()
     print("Бот запущен", flush=True)
     while True:
         try:
             updates = call("getUpdates", offset=offset, timeout=50, allowed_updates=["message", "pre_checkout_query", "callback_query"])
-        except Exception as e:  # сеть моргнула: ждём и пробуем снова
-            print("Ошибка сети:", e, flush=True)
+        except Exception as err:  # сеть моргнула: ждём и пробуем снова
+            print("Ошибка сети:", err, flush=True)
             time.sleep(3)
             continue
         for u in updates:
@@ -269,18 +474,25 @@ def main():
                     continue            # в группах бот молчит
                 p = m.get("successful_payment")
                 text = m.get("text", "")
+                uid = (m.get("from") or {}).get("id")
                 if p:
-                    line = {"time": int(time.time()), "user": m["from"]["id"], "stars": p["total_amount"], "payload": p["invoice_payload"], "charge": p["telegram_payment_charge_id"]}
+                    line = {"time": int(time.time()), "user": uid, "stars": p["total_amount"], "payload": p["invoice_payload"], "charge": p["telegram_payment_charge_id"]}
                     with open(LOG, "a") as f:
                         f.write(json.dumps(line) + "\n")
                     print("Оплата:", line, flush=True)
-                    send(m["chat"]["id"], f"Оплата прошла: +{p['total_amount']} звёзд на балансе.", reply_markup=play_button("Играть"))
+                    send(m["chat"]["id"], f"{e('money')} Оплата прошла: <b>+{p['total_amount']} ⭐</b> на балансе.", reply_markup=play_button("Играть"))
+                elif uid in ADMINS and m.get("reply_to_message") and from_support(m):
+                    pass
                 elif text.startswith("/start"):
                     on_start(m)
                 elif text.startswith("/"):
+                    waiting_support.pop(uid, None)
                     on_command(m, text[1:].split()[0].split("@")[0].lower())
-            except Exception as e:
-                print("Ошибка обработки:", e, flush=True)
+                elif uid in waiting_support and m:
+                    waiting_support.pop(uid, None)
+                    to_support(m)
+            except Exception as err:
+                print("Ошибка обработки:", err, flush=True)
 
 
 if __name__ == "__main__":
