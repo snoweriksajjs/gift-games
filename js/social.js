@@ -357,7 +357,7 @@
     } else if (m.gift && byId[m.gift]) {
       const s = byId[m.gift];
       cls = "giftmsg";
-      body = `<button class="m-giftcard" data-gift="${s.id}" style="${A.bg(s)}"><i class="pat"></i>${A.pic(s, true)}<b>${esc(s.gift)}</b><span>#${s.num}</span></button>
+      body = `<button class="m-giftcard" data-gift="${s.id}" style="${A.bg(s)}"><i class="pat"></i>${A.pic(s, true)}<b>${esc(s.gift)}</b><span>${esc(s.model)}</span></button>
         <span class="m-gift-cap">${mine ? `Вы подарили ${esc(cur.peer ? cur.peer.name : "")}` : `Подарок от ${esc(m.user.name)}`}</span>
         <span class="m-gift-rows"><span>Модель</span><b>${esc(s.model)}</b><span>Фон</span><b>${esc(s.backdrop)}</b><span>Символ</span><b>${esc(s.symbol)}</b><span>Цена</span><b class="m-price">${STAR}${fmt(s.price)}</b></span>
         <span class="m-gift-btn" data-gift="${s.id}">Посмотреть</span>${m.text ? `<span class="m-text">${esc(m.text)}</span>` : ""}`;
@@ -661,7 +661,7 @@
             ${u.bio ? `<div class="pn-line"><b class="pre">${esc(u.bio)}</b><span>о себе</span></div>` : ""}
             ${g ? `<div class="pn-line"><b>${esc(g.gift)} ✦</b><span>особый стиль коллекции</span></div>` : ""}
           </section>` : ""}
-          ${gifts.length ? `<h4 class="sec-title">Подарки · ${gifts.length}</h4><div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}<i class="pn-gnum">#${byId[id].num}</i></button>`).join("")}</div>` : ""}`;
+          ${gifts.length ? `<h4 class="sec-title">Подарки · ${gifts.length}</h4><div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}</button>`).join("")}</div>` : ""}`;
       };
       el.onclick = async (e) => {
         const b = e.target.closest("[data-act]"), gb = e.target.closest("[data-g]");
@@ -1089,7 +1089,7 @@
     const s = byId[it.id];
     const meCard = { id: myId, name: user ? user.first_name : "Вы", photo: user && user.photo_url, look: A.bannerLook() };
     $("#sdBody").innerHTML = `<div class="sd-art" style="${A.bg(s)}"><i class="pat"></i><span class="anim"></span>${A.pic(s, true)}</div>
-      <div class="sd-name"><b>${esc(s.gift)}</b><span>#${s.num}</span></div>
+      <div class="sd-name"><b>${esc(s.gift)}</b><span>${esc(s.model)}</span></div>
       <div class="sd-attrs"><span><i>Модель</i>${esc(s.model)}</span><span><i>Фон</i>${esc(s.backdrop)}</span><span><i>Символ</i>${esc(s.symbol)}</span></div>
       <div class="sd-flow"><span class="sd-p">${ava(meCard, "lg")}<i>Вы</i></span><svg viewBox="0 0 48 24"><path d="M2 12h40M34 4l8 8-8 8" /></svg><span class="sd-p">${ava(peer, "lg")}<i>${esc(peer.name)}</i></span></div>
       <section class="list sd-rows">
@@ -1157,7 +1157,7 @@
     const it = st().inv.find((x) => x.uid === uid); if (!it || it.stake) return;
     lockUid = uid;
     const s = byId[it.id];
-    $("#lkGift").innerHTML = `${A.chip(s)}<span class="grow"><b>${esc(s.gift)}</b> <span class="hint">#${s.num}</span><br><span class="hint">${STAR} ${fmt(s.price)}</span></span>`;
+    $("#lkGift").innerHTML = `${A.chip(s)}<span class="grow"><b>${esc(s.gift)}</b> <span class="hint">${esc(s.model)}</span><br><span class="hint">${STAR} ${fmt(s.price)}</span></span>`;
     renderPlans(s);
     openSheet($("#lockSheet"));
   }
@@ -1255,7 +1255,7 @@
     let c;
     try { c = await call("GET", "/api/config"); } catch { return; }
     A.live = c;
-    A.applyPrices(c.prices || null);
+    A.applyPrices(c.floors || null);
     try { localStorage.setItem("dc_cfg", JSON.stringify({ rtp: c.rtp, modes: c.modes })); } catch {}   // шансы: со следующего запуска
     const t = $("#refTerms"); if (t) t.textContent = `${fmt(c.ref_bonus)} звёзд за каждого друга, который запустит бота по вашей ссылке`;
     $("#adminBtn").hidden = !c.admin;

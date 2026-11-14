@@ -18,13 +18,13 @@
 
   const CATALOG = window.GIFTS || [];
   const byId = Object.fromEntries(CATALOG.map((s) => [s.id, s]));
-  // Рыночные цены (Fragment) присылает сервер; последние сохранены на устройстве, чтобы сразу показать их при запуске.
-  // Цены из gifts.js остаются запасными.
-  const BASE_PRICE = Object.fromEntries(CATALOG.map((s) => [s.id, s.price]));
-  function setPrices(p) {
-    for (const g of CATALOG) g.price = (p && p[g.id] > 0) ? p[g.id] : BASE_PRICE[g.id];
+  // Цена подарка = минимальная цена его коллекции на рынке (Fragment) × множитель редкости модели, фона и символа.
+  // Свежие минимальные цены присылает сервер, последние сохранены на устройстве; запасные лежат в gifts.js.
+  const BASE_FLOORS = window.GIFT_FLOORS || {};
+  function setPrices(floors) {
+    for (const g of CATALOG) g.price = Math.max(1, Math.round(((floors && floors[g.gift]) || BASE_FLOORS[g.gift] || g.price) * (g.mult || 1)));
   }
-  try { setPrices(JSON.parse(localStorage.getItem("dc_prices") || "null")); } catch {}
+  try { setPrices(JSON.parse(localStorage.getItem("dc_floors") || "null")); } catch {}
   const byPrice = [...CATALOG].sort((a, b) => a.price - b.price);
 
   // ---------- Telegram ----------
@@ -240,7 +240,7 @@
   const pic = (s, eager) => `<img src="${s.img}" alt="" ${eager ? "" : 'loading="lazy"'} decoding="async" draggable="false">`;
   function tile(s, cls = "", attrs = "") {
     return `<div class="gift ${cls}" style="${bg(s)}" ${attrs} tabindex="0" role="button" aria-label="${s.gift}, ${s.model}, ${fmt(s.price)} звёзд">
-      <i class="pat"></i><span class="rib">#${s.num}</span>${pic(s)}
+      <i class="pat"></i><span class="rib">${String(s.rare).replace(".", ",")}%</span>${pic(s)}
       <span class="nm">${s.gift}</span><span class="md">${s.model}</span>
       <span class="pr">${STAR}${fmtS(s.price)}</span></div>`;
   }
@@ -536,7 +536,7 @@
     resGift.className = "res-art" + (gift ? "" : " stars");
     resGift.style.cssText = gift ? bg(gift) : "";
     resGift.innerHTML = gift ? `<i class="pat"></i><span class="anim"></span>${pic(gift, true)}` : `<b>${STAR}${fmt(stars)}</b>`;
-    $("#resTitle").innerHTML = gift ? `${gift.gift} <span class="hint">#${gift.num}</span>` : "Звёзды на балансе";
+    $("#resTitle").innerHTML = gift ? `${gift.gift} <span class="hint">${gift.model}</span>` : "Звёзды на балансе";
     $("#resText").innerHTML = [gift ? `${STAR} ${fmt(gift.price)}` : "", sub].filter(Boolean).join(" · ");
     const extra = $("#resExtra");
     extra.hidden = !(gift && stars);
@@ -570,10 +570,10 @@
   $("#resShare").addEventListener("click", () => {
     const g = prize && prize.gift; if (!g) return;
     const link = `https://t.me/${BOT_USERNAME}` + (user ? `?start=ref_${user.id}` : "");
-    const text = `Выиграл ${g.gift} #${g.num} за ${fmt(g.price)} звёзд`;
+    const text = `Выиграл ${g.gift} (${g.model}) за ${fmt(g.price)} звёзд`;
     hap.soft();
     if (inTg && tg.shareToStory) {
-      try { tg.shareToStory(`${SITE}/share/${g.id}.jpg`, { text: `${text}\n${link}`, widget_link: { url: link, name: "Играть" } }); return; } catch {}
+      try { tg.shareToStory(Number(g.id.slice(1)) < 75 ? `${SITE}/share/${g.id}.jpg` : `${SITE}/img/logo-banner.jpg`, { text: `${text}\n${link}`, widget_link: { url: link, name: "Играть" } }); return; } catch {}
     }
     if (navigator.share) navigator.share({ text, url: link }).catch(() => {});
     else if (navigator.clipboard) navigator.clipboard.writeText(`${text} ${link}`).then(() => toast("Текст и ссылка скопированы"), () => toast("Сторис доступны в Telegram"));
@@ -677,10 +677,10 @@
     art.style.cssText = bg(s);
     art.innerHTML = `<i class="pat"></i><span class="anim"></span>${pic(s, true)}`;
     $("#gcName").textContent = s.gift;
-    $("#gcNum").textContent = "#" + s.num;
+    $("#gcNum").textContent = s.model;
     const row = (k, v, r) => `<div class="row"><span>${k}</span><span class="grow gc-v">${v}</span><b>${String(r).replace(".", ",")}%</b></div>`;
     $("#gcTable").innerHTML = row("Модель", s.model, s.rare) + row("Фон", s.backdrop, s.brare) + row("Символ", s.symbol, s.srare) +
-      `<div class="row"><span>Цена${App.live && App.live.prices ? ` <i class="gc-src">по Fragment</i>` : ""}</span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>`;
+      `<div class="row"><span>Цена <i class="gc-src">оценка по Fragment и редкости</i></span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>`;
     const sell = $("#gcSell");
     sell.hidden = uid == null || locked(uid);
     if (App.giftActions) App.giftActions(s, uid);
@@ -898,7 +898,7 @@
     let value = 0, text = "";
     if (r.kind === "stars" || r.kind === "add") { state.balance = Math.max(0, state.balance + r.amount); value = Math.abs(r.amount); text = `${r.amount >= 0 ? "+" : ""}${fmt(r.amount)} звёзд`; }
     else if (r.kind === "set") { value = Math.max(0, r.amount - state.balance); state.balance = Math.max(0, r.amount); text = `Баланс: ${fmt(r.amount)} звёзд`; }
-    else if ((r.kind === "gift") && byId[r.gift]) { grant(byId[r.gift]); value = byId[r.gift].price; text = `${byId[r.gift].gift} #${byId[r.gift].num}`; }
+    else if ((r.kind === "gift") && byId[r.gift]) { grant(byId[r.gift]); value = byId[r.gift].price; text = `${byId[r.gift].gift} (${byId[r.gift].model})`; }
     else return;
     if (r.wager > 0 && value > 0) {
       state.wager = state.wager || { need: 0, done: 0 };
@@ -1037,7 +1037,7 @@
     $("#admGrant").addEventListener("click", () => {
       const g = byId[$("#admGift").value]; if (!g) return;
       grant(g); hap.coin(); renderStake(); renderProfile(); renderTasks(); info();
-      toast(`Выдан ${g.gift} #${g.num}`);
+      toast(`Выдан ${g.gift} (${g.model})`);
     });
     $("#admCode").addEventListener("click", () => {
       const n = num("#admCodeSum"); if (n < 1) return toast("Введите сумму");
@@ -1083,7 +1083,7 @@
     applyPrices(p) {                     // новые цены с сервера: пересортировать и перерисовать
       const before = JSON.stringify(CATALOG.map((g) => g.price));
       setPrices(p);
-      try { localStorage.setItem("dc_prices", JSON.stringify(p || null)); } catch {}
+      try { localStorage.setItem("dc_floors", JSON.stringify(p || null)); } catch {}
       if (JSON.stringify(CATALOG.map((g) => g.price)) === before) return;
       byPrice.sort((a, b) => a.price - b.price);
       renderStake(); renderProfile(); renderTasks();

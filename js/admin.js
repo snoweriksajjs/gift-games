@@ -12,7 +12,13 @@
   const DUCK_IDS = { hi: "5258029913021119781", money: "5260436911478043287", fire: "5258044395650841388", party: "5260515582394005038", cool: "5260256767664747296", strong: "5260237109599431823", love: "5258183535411360332", think: "5260486002954237511", wow: "5260414358604771183", ok: "5260429575673902036", point: "5260324447759402046", heart: "5260634973894900408" };
   const factRtp = (u) => (u.wagered ? Math.round((u.won / u.wagered) * 1000) / 10 + "%" : "—");
   const ago = (ts) => { const s = Date.now() / 1000 - (ts || 0); return s < 120 ? "в сети" : s < 3600 ? `${Math.round(s / 60)} мин назад` : s < 86400 ? `${Math.round(s / 3600)} ч назад` : `${Math.round(s / 86400)} дн назад`; };
-  const giftOptions = () => byPrice.slice().reverse().map((g) => `<option value="${g.id}">${esc(g.gift)} #${g.num} · ${fmt(g.price)} ⭐</option>`).join("");
+  // каталог большой: в выпадающем списке до 150 подарков, остальные находятся поиском по названию, модели, фону, символу
+  const giftOptions = (q = "") => {
+    q = q.trim().toLowerCase();
+    const list = (q ? byPrice.filter((g) => (g.gift + " " + g.model + " " + g.backdrop + " " + g.symbol).toLowerCase().includes(q)) : byPrice).slice().reverse().slice(0, 150);
+    return list.map((g) => `<option value="${g.id}">${esc(g.gift)} · ${esc(g.model)} · ${esc(g.backdrop)} · ${fmt(g.price)} ⭐</option>`).join("") || `<option value="">Ничего не нашлось</option>`;
+  };
+  const giftPicker = (id) => `<input class="adm-gq" data-for="${id}" placeholder="Поиск подарка: Pepe, Black, Durov…"><select id="${id}">${giftOptions()}</select>`;
 
   let view = null, tab = "home", stackEl = null;
 
@@ -121,7 +127,7 @@
         <input id="auNote" placeholder="Подпись для игрока, например «Бонус от админа»">
         <div class="adm-btns"><button data-act="add">Начислить</button><button data-act="sub">Списать</button><button data-act="set">Установить</button></div></section>
       <h4 class="adm-h">Выдать подарок</h4>
-      <section class="list adm-form"><select id="auGift">${giftOptions()}</select><div class="adm-btns"><button data-act="gift">Выдать подарок</button></div></section>
+      <section class="list adm-form">${giftPicker("auGift")}<div class="adm-btns"><button data-act="gift">Выдать подарок</button></div></section>
       <p class="adm-note">Изменения дойдут до игрока при следующем заходе в приложение, каждое ровно один раз.</p>
       <h4 class="adm-h">Сообщение от бота</h4>
       <section class="list adm-form"><textarea id="auMsg" rows="3" placeholder="Текст, можно с HTML-разметкой"></textarea><div class="adm-btns"><button data-act="msg">Отправить</button></div></section>
@@ -165,7 +171,7 @@
         <input id="apCode" placeholder="Код любого вида: DUCK2026, ПОДАРОК, x5-boost. Пусто = сгенерировать" maxlength="40">
         <div class="seg flush adm-seg" id="apKind"><button data-k="stars" class="on">Звёзды</button><button data-k="gift">Подарок</button></div>
         <input id="apAmount" type="number" inputmode="numeric" placeholder="Сколько звёзд">
-        <select id="apGift" hidden>${giftOptions()}</select>
+        <div id="apGiftBox" hidden>${giftPicker("apGift")}</div>
         <div class="adm-row2"><input id="apUses" type="number" inputmode="numeric" placeholder="Активаций (0 = без лимита)"><input id="apDays" type="number" inputmode="numeric" placeholder="Дней (0 = навсегда)"></div>
         <label class="adm-lab">Отыгрыш: чтобы вывести подарки, нужно прокрутить награду <b id="apWv">×0</b></label>
         <input id="apWager" type="range" min="0" max="20" step="1" value="0">
@@ -180,7 +186,7 @@
     $("#apWager").oninput = () => ($("#apWv").textContent = "×" + $("#apWager").value);
     body().onclick = async (e) => {
       const k = e.target.closest("[data-k]");
-      if (k) { kind = k.dataset.k; all("#apKind button").forEach((x) => x.classList.toggle("on", x === k)); $("#apAmount").hidden = kind !== "stars"; $("#apGift").hidden = kind !== "gift"; return; }
+      if (k) { kind = k.dataset.k; all("#apKind button").forEach((x) => x.classList.toggle("on", x === k)); $("#apAmount").hidden = kind !== "stars"; $("#apGiftBox").hidden = kind !== "gift"; return; }
       const c = e.target.closest("[data-copy]"); if (c) { navigator.clipboard && navigator.clipboard.writeText(c.dataset.copy); return toast("Код скопирован"); }
       try {
         const tg2 = e.target.closest("[data-toggle]"); if (tg2) { await api("POST", `/api/admin/promos/${encodeURIComponent(tg2.dataset.toggle)}/toggle`, {}); return promos(); }
@@ -342,6 +348,11 @@
     };
   }
 
+  // поиск в выборе подарка
+  document.addEventListener("input", (e) => {
+    const i = e.target.closest && e.target.closest(".adm-gq"); if (!i) return;
+    const sel = document.getElementById(i.dataset.for); if (sel) sel.innerHTML = giftOptions(i.value);
+  });
   A.openAdmin = open;
   const prevBack = A.onBack;
   A.onBack = () => { if (view && view.classList.contains("on")) return close(); if (prevBack) prevBack(); };

@@ -71,70 +71,39 @@ def settings():
 # ---------- рыночные цены подарков ----------
 # Открытый датасет минимальных цен коллекций на Fragment (обновляется раз в день): цены в GRAM и долларах.
 # Переводим в звёзды по курсу star_usd. Внутри коллекции сохраняем соотношение моделей из каталога (не больше ×3).
-_CAT = {}
-
-
-def catalog():
-    """Каталог подарков из gifts.js (рядом с сервером или в корне сайта)."""
-    if not _CAT:
-        here = os.path.dirname(os.path.abspath(__file__))
-        for path in (os.path.join(here, "gifts.js"), os.path.join(here, "..", "gifts.js")):
-            if os.path.exists(path):
-                src = open(path, encoding="utf-8").read()
-                for g in json.loads(src[src.index("["):src.rindex("]") + 1]):
-                    _CAT[g["id"]] = {"gift": g["gift"], "price": g["price"]}
-                break
-    return _CAT
-
-
 def _slug(name):
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 def refresh_prices():
-    import urllib.request
+    """Минимальные цены коллекций с Fragment, в звёздах по курсу star_usd. Цена подарка = минимум коллекции × редкость."""
+    import urllib.request, catalog
     s = settings()
     req = urllib.request.Request(PRICES_URL, headers={"User-Agent": "DuckChance-bot"})
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.load(r)
-    floors = dict(data.get("floors") or [])
+    floors_src = dict(data.get("floors") or [])
     star = float(s.get("star_usd") or 0.015)
-    cat = catalog()
-    base = {gid: g["price"] for gid, g in cat.items()}    # исходные цены каталога, от них считаем соотношение моделей
-    by_col = {}
-    for gid, g in cat.items():
-        by_col.setdefault(g["gift"], []).append(gid)
-    prices = {}
-    for col, ids in by_col.items():
-        f = floors.get(_slug(col))
-        usd = f and (f.get("floor_usd") or 0)
-        if not usd:
-            continue
-        floor_stars = usd / star
-        low = min(base[i] for i in ids)
-        for i in ids:
-            prices[i] = max(1, int(round(floor_stars * min(3, base[i] / low))))
-    if not prices:
+    floors = {}
+    for name in catalog.base_floors():
+        f = floors_src.get(_slug(name))
+        if f and f.get("floor_usd"):
+            floors[name] = max(1, int(round(f["floor_usd"] / star)))
+    if not floors:
         raise RuntimeError("no prices")
-    for k, v in (("prices", prices), ("prices_date", data.get("date") or ""), ("prices_at", int(time.time()))):
+    for k, v in (("floors", floors), ("prices_date", data.get("date") or ""), ("prices_at", int(time.time()))):
         run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", k, json.dumps(v))
-    apply_prices(prices)
-    print(f"Цены подарков обновлены: {len(prices)} шт., данные за {data.get('date')}", flush=True)
-    return {"count": len(prices), "date": data.get("date")}
+    apply_prices(floors)
+    print(f"Цены коллекций обновлены: {len(floors)}, данные за {data.get('date')}", flush=True)
+    return {"count": len(floors), "date": data.get("date")}
 
 
-def apply_prices(prices):
-    """Цены для сервера: баннеры профиля и подпись в боте."""
+def apply_prices(floors):
+    """Цены для сервера: баннеры профиля и подписи в боте."""
     try:
-        pc = sys.modules.get("profile_card")
-        if not pc:
-            import profile_card as pc        # на сервере с Pillow; локально может не быть
-        cat = pc._catalog()
-        if getattr(pc, "BASE_PRICES", None) is None:
-            pc.BASE_PRICES = {gid: g["price"] for gid, g in cat.items()}
-        on = settings().get("market_prices", True)
-        for gid, g in cat.items():
-            g["price"] = prices.get(gid, pc.BASE_PRICES[gid]) if on else pc.BASE_PRICES[gid]
+        import catalog
+        catalog.catalog()
+        catalog.set_floors(floors if settings().get("market_prices", True) else {})
     except Exception as e:
         print("Цены не применились:", e, flush=True)
 
@@ -142,8 +111,8 @@ def apply_prices(prices):
 def prices_loop():
     time.sleep(5)
     s = settings()
-    if isinstance(s.get("prices"), dict):
-        apply_prices(s["prices"])
+    if isinstance(s.get("floors"), dict):
+        apply_prices(s["floors"])
     while True:
         try:
             s = settings()
@@ -190,8 +159,8 @@ def public_config(uid):
     done = {r["task"] for r in q("SELECT task FROM task_done WHERE user=?", uid)}
     for t in tasks:
         t["done"] = t["id"] in done
-    prices = s.get("prices") if s.get("market_prices", True) and isinstance(s.get("prices"), dict) else None
-    return {"prices": prices, "prices_date": s.get("prices_date") if prices else "",
+    floors = s.get("floors") if s.get("market_prices", True) and isinstance(s.get("floors"), dict) else None
+    return {"floors": floors, "prices_date": s.get("prices_date") if floors else "",
             "rtp": base, "modes": modes, "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
             "maintenance": s["maintenance"] and uid not in ADMINS, "maint_text": s["maint_text"], "withdraw_note": s["withdraw_note"],
             "tasks": tasks, "admin": uid in ADMINS}
@@ -439,7 +408,7 @@ def handle(method, p, uid, body, query, now):
         for k in ("maint_text", "withdraw_note"):
             if k in body:
                 s[k] = G["clean"](body[k], 200)
-        s.pop("prices", None)                     # цены пишет только обновление цен
+        s.pop("prices", None); s.pop("floors", None)   # цены пишет только обновление цен
         for k, v in s.items():
             run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", k, json.dumps(v, ensure_ascii=False))
         log(uid, "settings", body)

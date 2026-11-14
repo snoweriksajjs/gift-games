@@ -13,15 +13,19 @@
     return chanceFor(v, A.byId[target].price);
   };
 
+  let shopLimit = 120;
   function renderShop() {
     if (A.sheet !== targetSheet) return;         // каталог рисуется, только когда открыт
     const q = shopSearch.value.trim().toLowerCase(), dir = shopSort.value === "asc" ? 1 : -1, v = A.stakeValue();
     const [lo, hi] = priceRange === "all" ? [0, Infinity] : priceRange.split("-").map((x) => (x === "" ? Infinity : Number(x)));
     const list = A.CATALOG
-      .filter((s) => s.price >= lo && s.price < hi && (!q || (s.gift + " " + s.model).toLowerCase().includes(q)))
+      .filter((s) => s.price >= lo && s.price < hi && (!q || (s.gift + " " + s.model + " " + s.backdrop + " " + s.symbol).toLowerCase().includes(q)))
       .sort((a, b) => (a.price - b.price) * dir);
+    // каталог большой: рисуем частями, остальное по кнопке
+    const shown = list.slice(0, shopLimit);
     shopGrid.innerHTML = list.length
-      ? list.map((s) => A.tile(s, [target === s.id ? "sel" : "", v > 0 && s.price <= v ? "off" : ""].join(" "), `data-id="${s.id}"`)).join("")
+      ? shown.map((s) => A.tile(s, [target === s.id ? "sel" : "", v > 0 && s.price <= v ? "off" : ""].join(" "), `data-id="${s.id}"`)).join("")
+        + (list.length > shown.length ? `<button class="shop-more" data-more>Показать ещё · осталось ${A.fmt(list.length - shown.length)}</button>` : "")
       : `<div class="empty">Ничего не нашлось</div>`;
   }
 
@@ -83,17 +87,18 @@
     init() {
       dial = new A.Dial($("#dialClassic"));
       $("#outSlot").addEventListener("click", () => A.openSheet(targetSheet));
-      targetSheet.addEventListener("sheet:open", () => { targetSheet.hidden = false; setTimeout(renderShop, 0); });
+      targetSheet.addEventListener("sheet:open", () => { targetSheet.hidden = false; shopLimit = 120; setTimeout(renderShop, 0); });
       shopGrid.addEventListener("click", (e) => {
+        if (e.target.closest("[data-more]")) { shopLimit += 120; A.hap.soft(); return renderShop(); }
         const c = e.target.closest("[data-id]"); if (spinning || !c || A.pressed) return;
         target = c.dataset.id; gotId = null; activeMult = null;
         A.hap.select(); A.closeSheet(); render();
       });
-      shopSearch.addEventListener("input", renderShop);
-      shopSort.addEventListener("change", renderShop);
+      shopSearch.addEventListener("input", () => { shopLimit = 120; renderShop(); });
+      shopSort.addEventListener("change", () => { shopLimit = 120; renderShop(); });
       priceSeg.addEventListener("click", (e) => {
         const b = e.target.closest("[data-r]"); if (!b) return;
-        priceRange = b.dataset.r;
+        priceRange = b.dataset.r; shopLimit = 120;
         all("button", priceSeg).forEach((x) => x.classList.toggle("on", x === b));
         renderShop();
       });

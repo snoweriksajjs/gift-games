@@ -23,11 +23,9 @@ def _font(weight, size):
 
 
 def _catalog():
-    """Каталог подарков берём из того же gifts.js, что и сайт."""
-    if not hasattr(_catalog, "v"):
-        src = open(os.path.join(HERE, "gifts.js"), encoding="utf-8").read()
-        _catalog.v = {g["id"]: g for g in json.loads(src[src.index("["):src.rindex("]") + 1])}
-    return _catalog.v
+    """Каталог подарков: тот же gifts.js, что у сайта, с рыночными ценами (server/catalog.py)."""
+    import catalog
+    return catalog.catalog()
 
 
 def _fetch(url):
