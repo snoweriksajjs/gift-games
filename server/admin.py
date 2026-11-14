@@ -18,7 +18,11 @@ DEFAULTS = {
     "maintenance": False,        # технические работы: приложение закрыто для всех, кроме админов
     "maint_text": "Идут технические работы. Скоро вернёмся.",
     "withdraw_note": "Вывод подарков скоро",
+    "market_prices": True,       # брать цены подарков с рынка (Fragment)
+    "star_usd": 0.015,           # сколько долларов стоит одна звезда при пересчёте цен
 }
+PRICES_URL = os.environ.get("PRICES_URL", "https://atlannn.github.io/telegram-gifts-floor-price/api/v1/latest.json")
+PRICES_EVERY = 3 * 3600
 MODES = ["classic", "streak", "contract", "arena", "crash", "egg"]
 
 
@@ -41,7 +45,8 @@ def bind(g):
     g["add_column"]("users", "banned", "INTEGER")
     g["add_column"]("users", "rtp", "TEXT")
     g["add_column"]("users", "wagered", "INTEGER")   # всего поставлено (с устройства игрока)
-    g["add_column"]("users", "won", "INTEGER")       # всего выиграно, без бесплатных яиц          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
+    g["add_column"]("users", "won", "INTEGER")       # всего выиграно, без бесплатных яиц
+    threading.Thread(target=prices_loop, daemon=True).start()          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
 
 
 q = lambda *a: G["q"](*a)
@@ -61,6 +66,92 @@ def settings():
         except ValueError:
             pass
     return s
+
+
+# ---------- рыночные цены подарков ----------
+# Открытый датасет минимальных цен коллекций на Fragment (обновляется раз в день): цены в GRAM и долларах.
+# Переводим в звёзды по курсу star_usd. Внутри коллекции сохраняем соотношение моделей из каталога (не больше ×3).
+_CAT = {}
+
+
+def catalog():
+    """Каталог подарков из gifts.js (рядом с сервером или в корне сайта)."""
+    if not _CAT:
+        here = os.path.dirname(os.path.abspath(__file__))
+        for path in (os.path.join(here, "gifts.js"), os.path.join(here, "..", "gifts.js")):
+            if os.path.exists(path):
+                src = open(path, encoding="utf-8").read()
+                for g in json.loads(src[src.index("["):src.rindex("]") + 1]):
+                    _CAT[g["id"]] = {"gift": g["gift"], "price": g["price"]}
+                break
+    return _CAT
+
+
+def _slug(name):
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def refresh_prices():
+    import urllib.request
+    s = settings()
+    req = urllib.request.Request(PRICES_URL, headers={"User-Agent": "DuckChance-bot"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.load(r)
+    floors = dict(data.get("floors") or [])
+    star = float(s.get("star_usd") or 0.015)
+    cat = catalog()
+    base = {gid: g["price"] for gid, g in cat.items()}    # исходные цены каталога, от них считаем соотношение моделей
+    by_col = {}
+    for gid, g in cat.items():
+        by_col.setdefault(g["gift"], []).append(gid)
+    prices = {}
+    for col, ids in by_col.items():
+        f = floors.get(_slug(col))
+        usd = f and (f.get("floor_usd") or 0)
+        if not usd:
+            continue
+        floor_stars = usd / star
+        low = min(base[i] for i in ids)
+        for i in ids:
+            prices[i] = max(1, int(round(floor_stars * min(3, base[i] / low))))
+    if not prices:
+        raise RuntimeError("no prices")
+    for k, v in (("prices", prices), ("prices_date", data.get("date") or ""), ("prices_at", int(time.time()))):
+        run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", k, json.dumps(v))
+    apply_prices(prices)
+    print(f"Цены подарков обновлены: {len(prices)} шт., данные за {data.get('date')}", flush=True)
+    return {"count": len(prices), "date": data.get("date")}
+
+
+def apply_prices(prices):
+    """Цены для сервера: баннеры профиля и подпись в боте."""
+    try:
+        pc = sys.modules.get("profile_card")
+        if not pc:
+            import profile_card as pc        # на сервере с Pillow; локально может не быть
+        cat = pc._catalog()
+        if getattr(pc, "BASE_PRICES", None) is None:
+            pc.BASE_PRICES = {gid: g["price"] for gid, g in cat.items()}
+        on = settings().get("market_prices", True)
+        for gid, g in cat.items():
+            g["price"] = prices.get(gid, pc.BASE_PRICES[gid]) if on else pc.BASE_PRICES[gid]
+    except Exception as e:
+        print("Цены не применились:", e, flush=True)
+
+
+def prices_loop():
+    time.sleep(5)
+    s = settings()
+    if isinstance(s.get("prices"), dict):
+        apply_prices(s["prices"])
+    while True:
+        try:
+            s = settings()
+            if s.get("market_prices", True) and time.time() - int(s.get("prices_at") or 0) > PRICES_EVERY - 60:
+                refresh_prices()
+        except Exception as e:
+            print("Цены подарков не обновились:", e, flush=True)
+        time.sleep(600)
 
 
 def log(admin, action, data):
@@ -99,7 +190,9 @@ def public_config(uid):
     done = {r["task"] for r in q("SELECT task FROM task_done WHERE user=?", uid)}
     for t in tasks:
         t["done"] = t["id"] in done
-    return {"rtp": base, "modes": modes, "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
+    prices = s.get("prices") if s.get("market_prices", True) and isinstance(s.get("prices"), dict) else None
+    return {"prices": prices, "prices_date": s.get("prices_date") if prices else "",
+            "rtp": base, "modes": modes, "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
             "maintenance": s["maintenance"] and uid not in ADMINS, "maint_text": s["maint_text"], "withdraw_note": s["withdraw_note"],
             "tasks": tasks, "admin": uid in ADMINS}
 
@@ -337,15 +430,33 @@ def handle(method, p, uid, body, query, now):
         for k in ("deposits", "free_egg", "maintenance"):
             if k in body:
                 s[k] = bool(body[k])
+        if "market_prices" in body:
+            s["market_prices"] = bool(body["market_prices"])
+        if "star_usd" in body:
+            s["star_usd"] = round(num(body["star_usd"], 0.001, 1, 0.015), 4)
         if "ref_bonus" in body:
             s["ref_bonus"] = int(num(body["ref_bonus"], 0, 100000, 100))
         for k in ("maint_text", "withdraw_note"):
             if k in body:
                 s[k] = G["clean"](body[k], 200)
+        s.pop("prices", None)                     # цены пишет только обновление цен
         for k, v in s.items():
             run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", k, json.dumps(v, ensure_ascii=False))
         log(uid, "settings", body)
+        if "star_usd" in body or "market_prices" in body:     # пересчитать цены по новому курсу
+            def redo():
+                try:
+                    refresh_prices() if settings().get("market_prices", True) else apply_prices({})
+                except Exception as e:
+                    print("Цены не пересчитались:", e, flush=True)
+            threading.Thread(target=redo, daemon=True).start()
         return s
+
+    if a == ["prices", "refresh"] and method == "POST":
+        try:
+            return refresh_prices()
+        except Exception as e:
+            raise err(502, f"prices: {e}")
 
     if a == ["promos"] and method == "GET":
         return {"promos": q("SELECT * FROM promos ORDER BY created DESC LIMIT 200")}

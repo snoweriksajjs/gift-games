@@ -18,6 +18,13 @@
 
   const CATALOG = window.GIFTS || [];
   const byId = Object.fromEntries(CATALOG.map((s) => [s.id, s]));
+  // Рыночные цены (Fragment) присылает сервер; последние сохранены на устройстве, чтобы сразу показать их при запуске.
+  // Цены из gifts.js остаются запасными.
+  const BASE_PRICE = Object.fromEntries(CATALOG.map((s) => [s.id, s.price]));
+  function setPrices(p) {
+    for (const g of CATALOG) g.price = (p && p[g.id] > 0) ? p[g.id] : BASE_PRICE[g.id];
+  }
+  try { setPrices(JSON.parse(localStorage.getItem("dc_prices") || "null")); } catch {}
   const byPrice = [...CATALOG].sort((a, b) => a.price - b.price);
 
   // ---------- Telegram ----------
@@ -673,7 +680,7 @@
     $("#gcNum").textContent = "#" + s.num;
     const row = (k, v, r) => `<div class="row"><span>${k}</span><span class="grow gc-v">${v}</span><b>${String(r).replace(".", ",")}%</b></div>`;
     $("#gcTable").innerHTML = row("Модель", s.model, s.rare) + row("Фон", s.backdrop, s.brare) + row("Символ", s.symbol, s.srare) +
-      `<div class="row"><span>Цена</span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>`;
+      `<div class="row"><span>Цена${App.live && App.live.prices ? ` <i class="gc-src">по Fragment</i>` : ""}</span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>`;
     const sell = $("#gcSell");
     sell.hidden = uid == null || locked(uid);
     if (App.giftActions) App.giftActions(s, uid);
@@ -1072,7 +1079,16 @@
   }
 
   const App = window.App = {
-    HOUSE, rtp, CFG, rangeMult, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
+    HOUSE, rtp, CFG, rangeMult,
+    applyPrices(p) {                     // новые цены с сервера: пересортировать и перерисовать
+      const before = JSON.stringify(CATALOG.map((g) => g.price));
+      setPrices(p);
+      try { localStorage.setItem("dc_prices", JSON.stringify(p || null)); } catch {}
+      if (JSON.stringify(CATALOG.map((g) => g.price)) === before) return;
+      byPrice.sort((a, b) => a.price - b.price);
+      renderStake(); renderProfile(); renderTasks();
+      if (App.mode && App.mode.enter && !App.busy) App.mode.enter();
+    }, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
     $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
     hap, snd, duckData, makeCode, redeemCode, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,

@@ -1255,6 +1255,7 @@
     let c;
     try { c = await call("GET", "/api/config"); } catch { return; }
     A.live = c;
+    A.applyPrices(c.prices || null);
     try { localStorage.setItem("dc_cfg", JSON.stringify({ rtp: c.rtp, modes: c.modes })); } catch {}   // шансы: со следующего запуска
     const t = $("#refTerms"); if (t) t.textContent = `${fmt(c.ref_bonus)} звёзд за каждого друга, который запустит бота по вашей ссылке`;
     $("#adminBtn").hidden = !c.admin;

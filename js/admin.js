@@ -301,6 +301,15 @@
         ${Object.keys(MODES).map((m) => `<div class="adm-mode"><span class="grow">${MODES[m]}</span><input type="number" inputmode="numeric" min="0" max="100" data-mode="${m}" placeholder="${pct(s.rtp)}" value="${s.modes[m] != null ? pct(s.modes[m]) : ""}"><i>%</i></div>`).join("")}
         <p class="adm-note">Пустое поле: режим берёт общий RTP. Новые шансы включаются у игрока со следующего запуска приложения.</p>
       </section>
+      <h4 class="adm-h">Цены подарков</h4>
+      <section class="list">
+        <label class="row pn-row"><span class="grow">Рыночные цены (Fragment)</span><input type="checkbox" class="sw" data-k="market_prices" ${s.market_prices !== false ? "checked" : ""}></label>
+      </section>
+      <section class="list adm-form">
+        <label class="adm-lab">Курс звезды для пересчёта, $ за 1 ⭐</label><input id="asStar" type="number" inputmode="decimal" step="0.001" value="${s.star_usd || 0.015}">
+        <p class="adm-note">${s.prices_date ? `Цены за ${esc(s.prices_date)}, загружено ${new Date((s.prices_at || 0) * 1000).toLocaleString("ru-RU")}. ` : "Цены ещё не загружались. "}Сервер обновляет их каждые 3 часа из открытых данных Fragment (минимальная цена коллекции).</p>
+        <div class="adm-btns"><button data-act="prices">Обновить цены сейчас</button></div>
+      </section>
       <h4 class="adm-h">Функции</h4>
       <section class="list">
         <label class="row pn-row"><span class="grow">Пополнение звёздами</span><input type="checkbox" class="sw" data-k="deposits" ${s.deposits ? "checked" : ""}></label>
@@ -317,13 +326,17 @@
     $("#asRtp").oninput = () => syncR($("#asRtp").value);
     $("#asRtpN").oninput = () => { if ($("#asRtpN").value !== "") syncR($("#asRtpN").value); };
     body().onclick = async (e) => {
+      if (e.target.closest('[data-act="prices"]')) {
+        try { const r = await api("POST", "/api/admin/prices/refresh", {}); hap.win(); toast(`Цены обновлены: ${r.count} подарков, данные за ${r.date}`); settings(); } catch (er) { toast("Источник цен недоступен, попробуйте позже"); }
+        return;
+      }
       if (!e.target.closest('[data-act="save"]')) return;
       const modes = {};
       all("[data-mode]", body()).forEach((i) => { if (i.value.trim() === "") return; const v = Number(i.value); if (v >= 0 && v <= 100) modes[i.dataset.mode] = v / 100; });
       const flags = {};
       all("[data-k]", body()).forEach((i) => (flags[i.dataset.k] = i.checked));
       try {
-        await api("POST", "/api/admin/settings", { rtp: Number($("#asRtp").value) / 100, modes, ...flags, maint_text: $("#asMaint").value, withdraw_note: $("#asWd").value, ref_bonus: Number($("#asRef").value) || 0 });
+        await api("POST", "/api/admin/settings", { rtp: Number($("#asRtp").value) / 100, modes, ...flags, star_usd: Number($("#asStar").value) || 0.015, maint_text: $("#asMaint").value, withdraw_note: $("#asWd").value, ref_bonus: Number($("#asRef").value) || 0 });
         hap.win(); toast("Настройки сохранены");
       } catch (er) { fail(er); }
     };

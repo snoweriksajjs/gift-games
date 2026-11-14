@@ -1037,7 +1037,7 @@ button.pn-line b { color: var(--link); }
 /* логотип DuckChance: утка в фирменном жёлтом, надпись цветом текста темы */
 .logo { display: flex; align-items: center; gap: 7%; margin: 0; }
 .logo-mark { height: 100%; width: auto; flex: none; }
-.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=24") center / contain no-repeat; mask: url("img/logo-word.png?v=24") center / contain no-repeat; }
+.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=25") center / contain no-repeat; mask: url("img/logo-word.png?v=25") center / contain no-repeat; }
 .bar-logo { height: 24px; gap: 7px; flex: none; }
 .splash-logo { position: absolute; left: 50%; bottom: calc(28px + var(--safe-b)); height: 20px; gap: 6px; transform: translateX(-50%); opacity: .9; animation: logoIn .5s ease both .15s; }
 @keyframes logoIn { from { opacity: 0; } }
@@ -1145,3 +1145,4 @@ button.pn-line b { color: var(--link); }
 .cv-send.fly svg { animation: sendFly .42s cubic-bezier(.3, .8, .4, 1); }
 @keyframes sendFly { 40% { transform: translateY(-26px); opacity: 0; } 41% { transform: translateY(18px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 .adm-tag.rtp { background: color-mix(in srgb, var(--btn) 15%, transparent); color: var(--link); }
+.gc-src { font-style: normal; font-size: 12px; color: var(--hint); margin-left: 4px; }
