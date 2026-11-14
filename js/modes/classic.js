@@ -67,6 +67,7 @@
       text: `Апгрейд, шанс ${pct(ch)}. Для выигрыша нужно число меньше ${(ch * 100).toFixed(3).replace(".", ",")}` });
     if (win) {
       stats.wins++; stats.best = Math.max(stats.best, tgt.price); if (ch < 0.25) stats.lowWins++;
+      stats.won = (stats.won || 0) + tgt.price;
       const uid = A.grant(tgt);
       target = null; gotId = tgt.id; activeMult = null;
       A.showPrize({ gift: tgt, uid, sub: xf(tgt.price / bet) });

@@ -1244,7 +1244,8 @@
     if (!canUse) return;
     clearTimeout(lookT);
     lookT = setTimeout(() => {
-      const body = { look: A.bannerLook(), gifts: giftIds(), balance: Math.floor(st().balance), staked: st().inv.filter((x) => x.stake).length }, j = JSON.stringify(body);
+      const body = { look: A.bannerLook(), gifts: giftIds(), balance: Math.floor(st().balance), staked: st().inv.filter((x) => x.stake).length,
+        wagered: Math.floor(st().stats.wagered || 0), won: Math.floor(st().stats.won || 0) }, j = JSON.stringify(body);
       if (j === sent && !force) return;
       call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; paintHandle(); if (r.pending) claimIncoming(); if (r.grants) claimGrants(); }).catch(() => {});
     }, force ? 0 : 1200);

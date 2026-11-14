@@ -39,7 +39,9 @@ def bind(g):
     CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, admin INTEGER, action TEXT, data TEXT, at INTEGER);
     """)
     g["add_column"]("users", "banned", "INTEGER")
-    g["add_column"]("users", "rtp", "TEXT")          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
+    g["add_column"]("users", "rtp", "TEXT")
+    g["add_column"]("users", "wagered", "INTEGER")   # всего поставлено (с устройства игрока)
+    g["add_column"]("users", "won", "INTEGER")       # всего выиграно, без бесплатных яиц          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
 
 
 q = lambda *a: G["q"](*a)
@@ -73,13 +75,21 @@ def personal_rtp(uid):
         return None
 
 
+def first(*vals):
+    """Первое заданное значение; 0 тоже считается заданным."""
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
 def effective_rtp(s, mine):
     """Шанс по режимам: личный режим, потом личный общий, потом режим для всех, потом общий."""
     mine = mine or {}
     out = {}
     for m in MODES:
-        out[m] = (mine.get("modes") or {}).get(m) or mine.get("all") or (s.get("modes") or {}).get(m) or s["rtp"]
-    return mine.get("all") or s["rtp"], out
+        out[m] = first((mine.get("modes") or {}).get(m), mine.get("all"), (s.get("modes") or {}).get(m), s["rtp"])
+    return first(mine.get("all"), s["rtp"]), out
 
 
 def public_config(uid):
@@ -147,7 +157,11 @@ def user_full(uid):
     card = G["user_card"](uid, True)
     mine = personal_rtp(uid)
     card["rtp"] = mine
-    card["rtp_effective"] = effective_rtp(settings(), mine)[1]
+    base, eff = effective_rtp(settings(), mine)
+    card["rtp_effective"] = eff
+    card["rtp_base"] = base
+    card["wagered"] = u.get("wagered") or 0
+    card["won"] = u.get("won") or 0
     card.update({"balance": u.get("balance") or 0, "staked": u.get("staked") or 0, "banned": bool(u.get("banned")),
                  "tg_username": u.get("username") or "",
                  "chats": (q1("SELECT COUNT(*) n FROM members WHERE user=?", uid) or {}).get("n", 0),
@@ -261,8 +275,9 @@ def handle(method, p, uid, body, query, now):
             rows = q(f"SELECT id FROM users ORDER BY {sort} LIMIT 50 OFFSET ?", off)
         out = []
         for r in rows:
-            uu = q1("SELECT balance, banned, username, rtp FROM users WHERE id=?", r["id"])
-            out.append(G["user_card"](r["id"]) | {"balance": uu["balance"] or 0, "banned": bool(uu["banned"]), "tg_username": uu["username"] or "", "own_rtp": bool(uu["rtp"])})
+            uu = q1("SELECT balance, banned, username, rtp, wagered, won FROM users WHERE id=?", r["id"])
+            out.append(G["user_card"](r["id"]) | {"balance": uu["balance"] or 0, "banned": bool(uu["banned"]), "tg_username": uu["username"] or "",
+                                                 "own_rtp": bool(uu["rtp"]), "wagered": uu["wagered"] or 0, "won": uu["won"] or 0})
         return {"users": out, "total": (q1("SELECT COUNT(*) n FROM users") or {}).get("n", 0)}
 
     if len(a) >= 2 and a[0] == "user":
@@ -287,10 +302,10 @@ def handle(method, p, uid, body, query, now):
                 log(uid, "rtp", {"user": tid, "reset": True})
                 return {"ok": True, "rtp": None}
             mine = {}
-            if body.get("all"):
-                mine["all"] = round(num(body["all"], 0.5, 0.99, 0.95), 3)
+            if body.get("all") is not None and body.get("all") != "":
+                mine["all"] = round(num(body["all"], 0, 1, 0.95), 3)
             if isinstance(body.get("modes"), dict):
-                mm = {m: round(num(v, 0.5, 0.99, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v}
+                mm = {m: round(num(v, 0, 1, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v is not None and v != ""}
                 if mm:
                     mine["modes"] = mm
             run("UPDATE users SET rtp=? WHERE id=?", json.dumps(mine) if mine else None, tid)
@@ -316,9 +331,9 @@ def handle(method, p, uid, body, query, now):
     if a == ["settings"] and method == "POST":
         s = settings()
         if "rtp" in body:
-            s["rtp"] = round(num(body["rtp"], 0.5, 0.99, 0.95), 3)
+            s["rtp"] = round(num(body["rtp"], 0, 1, 0.95), 3)
         if isinstance(body.get("modes"), dict):
-            s["modes"] = {m: round(num(v, 0.5, 0.99, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v}
+            s["modes"] = {m: round(num(v, 0, 1, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v is not None and v != ""}
         for k in ("deposits", "free_egg", "maintenance"):
             if k in body:
                 s[k] = bool(body[k])

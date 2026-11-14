@@ -11,10 +11,10 @@
   // Настройки из админки. Сервер присылает их при каждом запуске, а применяются они со следующего запуска:
   // шансы режимов считаются один раз при загрузке.
   const CFG = (() => { try { return JSON.parse(localStorage.getItem("dc_cfg")) || {}; } catch { return {}; } })();
-  const clampRtp = (v) => (typeof v === "number" && v >= 0.5 && v <= 0.99 ? v : 0.95);
+  const clampRtp = (v) => (typeof v === "number" && v >= 0 && v <= 1 ? v : 0.95);     // от 0 до 100%
   const HOUSE = clampRtp(CFG.rtp);     // доля, которая в среднем возвращается игрокам
   // свежие настройки с сервера (App.live) важнее сохранённых с прошлого запуска
-  const rtp = (mode) => { const L = App.live || CFG; return clampRtp((L.modes || {})[mode] || L.rtp || HOUSE); };
+  const rtp = (mode) => { const L = App.live || CFG; return clampRtp((L.modes || {})[mode] ?? L.rtp ?? HOUSE); };
 
   const CATALOG = window.GIFTS || [];
   const byId = Object.fromEntries(CATALOG.map((s) => [s.id, s]));
@@ -247,8 +247,16 @@
     return best;
   }
   // выдача выигрыша: подарок по сумме и остаток звёздами
-  function payout(value) {
+  // множитель от lo до hi со средним rtp (контракт, яйцо). Ниже lo формулу масштабируем, и среднее остаётся rtp
+  function rangeMult(roll, rtp, lo, hi) {
+    const base = Math.max(rtp, lo + 0.01), k = (hi - lo) / (base - lo) - 1;
+    const m = lo + (hi - lo) * Math.pow(roll, k);
+    return rtp >= lo + 0.01 ? m : m * (rtp / base);
+  }
+  // free: бесплатный выигрыш (яйцо дня) не идёт в фактический RTP игрока
+  function payout(value, free) {
     value = Math.floor(value);
+    if (!free) state.stats.won = (state.stats.won || 0) + value;
     const gift = bestGift(value), stars = value - (gift ? gift.price : 0);
     let uid = null;
     if (gift) { uid = state.uidSeq++; state.inv.push({ uid, id: gift.id }); }
@@ -1064,7 +1072,7 @@
   }
 
   const App = window.App = {
-    HOUSE, rtp, CFG, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
+    HOUSE, rtp, CFG, rangeMult, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
     $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
     hap, snd, duckData, makeCode, redeemCode, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,

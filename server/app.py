@@ -26,7 +26,7 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "23")
+VER = os.environ.get("APP_VER", "24")
 BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
@@ -380,7 +380,7 @@ def api(method, path, uid, body, query):
             sets.append(("look", json.dumps(clean_look(body["look"]))))
         if isinstance(body.get("gifts"), list):
             sets.append(("gifts", json.dumps([g for g in body["gifts"] if isinstance(g, str) and GIFT_ID.match(g)][:60])))
-        for k in ("balance", "staked"):       # для баннера профиля в боте; считается на устройстве
+        for k in ("balance", "staked", "wagered", "won"):   # баннер профиля и фактический RTP в админке; считается на устройстве
             if isinstance(body.get(k), int) and 0 <= body[k] < 10**12:
                 sets.append((k, body[k]))
         if body.get("bio") is not None:

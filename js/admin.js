@@ -10,6 +10,7 @@
   const MODES = { classic: "Апгрейд", streak: "Серия", contract: "Контракт", arena: "Арена", crash: "Краш", egg: "Яйцо" };
   const DUCKS = { hi: "👋", money: "🤑", fire: "🔥", party: "🥳", cool: "😎", strong: "💪", love: "🫶", think: "🤔", wow: "🍾", ok: "👌", point: "🫵", heart: "❤️" };
   const DUCK_IDS = { hi: "5258029913021119781", money: "5260436911478043287", fire: "5258044395650841388", party: "5260515582394005038", cool: "5260256767664747296", strong: "5260237109599431823", love: "5258183535411360332", think: "5260486002954237511", wow: "5260414358604771183", ok: "5260429575673902036", point: "5260324447759402046", heart: "5260634973894900408" };
+  const factRtp = (u) => (u.wagered ? Math.round((u.won / u.wagered) * 1000) / 10 + "%" : "—");
   const ago = (ts) => { const s = Date.now() / 1000 - (ts || 0); return s < 120 ? "в сети" : s < 3600 ? `${Math.round(s / 60)} мин назад` : s < 86400 ? `${Math.round(s / 3600)} ч назад` : `${Math.round(s / 86400)} дн назад`; };
   const giftOptions = () => byPrice.slice().reverse().map((g) => `<option value="${g.id}">${esc(g.gift)} #${g.num} · ${fmt(g.price)} ⭐</option>`).join("");
 
@@ -90,7 +91,7 @@
       try { d = await api("GET", `/api/admin/users?q=${encodeURIComponent(uq)}&sort=${rtpOnly ? "seen" : usort}${rtpOnly ? "&filter=rtp" : ""}`); } catch (e) { return fail(e); }
       $("#admUsers").innerHTML = `<p class="adm-note">Всего игроков: ${fmt(d.total)}</p><section class="list">${d.users.map((u) =>
         `<button class="row adm-user" data-uid="${u.id}"><span class="ava sm2 tint" style="--h:${(u.id * 47) % 360};${u.photo ? `background-image:url('${esc(u.photo)}')` : ""}">${u.photo ? "" : esc(u.name.charAt(0))}</span>
-          <span class="grow"><b>${esc(u.name)}${u.banned ? ` <i class="adm-tag bad">бан</i>` : ""}${u.own_rtp ? ` <i class="adm-tag rtp">свои шансы</i>` : ""}</b><span>${u.handle ? "@" + esc(u.handle) : u.tg_username ? "tg @" + esc(u.tg_username) : "ID " + u.id} · ${ago(u.seen)}</span></span>
+          <span class="grow"><b>${esc(u.name)}${u.banned ? ` <i class="adm-tag bad">бан</i>` : ""}${u.own_rtp ? ` <i class="adm-tag rtp">свои шансы</i>` : ""}</b><span>${u.handle ? "@" + esc(u.handle) : u.tg_username ? "tg @" + esc(u.tg_username) : "ID " + u.id} · ${ago(u.seen)}${u.wagered ? ` · RTP ${factRtp(u)}` : ""}</span></span>
           <b class="adm-bal">${STAR}${fmt(u.balance)}</b></button>`).join("") || `<div class="row">Никого не нашли</div>`}</section>`;
     }
   }
@@ -104,11 +105,14 @@
     body().innerHTML = `<button class="adm-back" data-act="back">‹ Все игроки</button>
       <div class="adm-card"><span class="ava lg tint" style="--h:${(u.id * 47) % 360};${u.photo ? `background-image:url('${esc(u.photo)}')` : ""}">${u.photo ? "" : esc(u.name.charAt(0))}</span>
         <b>${esc(u.name)}${u.banned ? ` <i class="adm-tag bad">бан</i>` : ""}</b><span>${u.handle ? "@" + esc(u.handle) + " · " : ""}${u.tg_username ? "tg @" + esc(u.tg_username) + " · " : ""}ID <span class="adm-copy" data-copy="${u.id}">${u.id}</span></span><span>${ago(u.seen)}</span></div>
-      <div class="adm-grid">${[[`${STAR}${fmt(u.balance)}`, "баланс"], [gifts.length, "подарков"], [u.staked, "в стейкинге"], [u.messages, "сообщений"]].map(([v, l]) => `<div class="adm-kpi"><b>${v}</b><span>${l}</span></div>`).join("")}</div>
+      <div class="adm-grid">${[[`${STAR}${fmt(u.balance)}`, "баланс"], [gifts.length, "подарков"], [u.staked, "в стейкинге"], [u.messages, "сообщений"]].map(([v, l]) => `<div class="adm-kpi"><b>${v}</b><span>${l}</span></div>`).join("")}
+        <div class="adm-kpi ${u.rtp ? "gold" : ""}"><b>${Math.round(u.rtp_base * 100)}%</b><span>RTP по настройке${u.rtp ? " (свой)" : ""}</span></div>
+        <div class="adm-kpi ${u.wagered && u.won / u.wagered > u.rtp_base ? "bad" : "ok"}"><b>${u.wagered ? factRtp(u) : "—"}</b><span>фактический RTP</span></div></div>
+      <p class="adm-note">Фактический RTP: выиграно ${STAR}${fmt(u.won)} из поставленных ${STAR}${fmt(u.wagered)}. На коротком отрезке он сильно скачет, к настройке приближается после сотен игр.</p>
       <h4 class="adm-h">Шансы игрока ${u.rtp ? `<i class="adm-tag rtp">свои</i>` : `<i class="adm-tag">как у всех</i>`}</h4>
       <section class="list adm-form">
-        <div class="adm-mode"><span class="grow"><b>Общий RTP игрока</b></span><input id="auRtpAll" type="number" inputmode="numeric" min="50" max="99" placeholder="—" value="${u.rtp && u.rtp.all ? Math.round(u.rtp.all * 100) : ""}"><i>%</i></div>
-        ${Object.keys(MODES).map((m) => `<div class="adm-mode"><span class="grow">${MODES[m]}</span><input type="number" inputmode="numeric" min="50" max="99" data-urtp="${m}" placeholder="${Math.round(u.rtp_effective[m] * 100)}" value="${u.rtp && u.rtp.modes && u.rtp.modes[m] ? Math.round(u.rtp.modes[m] * 100) : ""}"><i>%</i></div>`).join("")}
+        <div class="adm-mode"><span class="grow"><b>Общий RTP игрока</b></span><input id="auRtpAll" type="number" inputmode="numeric" min="0" max="100" placeholder="${Math.round(u.rtp_base * 100)}" value="${u.rtp && u.rtp.all != null ? Math.round(u.rtp.all * 100) : ""}"><i>%</i></div>
+        ${Object.keys(MODES).map((m) => `<div class="adm-mode"><span class="grow">${MODES[m]}</span><input type="number" inputmode="numeric" min="0" max="100" data-urtp="${m}" placeholder="${Math.round(u.rtp_effective[m] * 100)}" value="${u.rtp && u.rtp.modes && u.rtp.modes[m] != null ? Math.round(u.rtp.modes[m] * 100) : ""}"><i>%</i></div>`).join("")}
         <p class="adm-note">Серым показано, что действует сейчас. Пустое поле: режим берёт общий RTP игрока, а если его нет, общие настройки. У игрока меняется в течение минуты.</p>
         <div class="adm-btns"><button data-act="rtp" class="main">Сохранить шансы</button>${u.rtp ? `<button data-act="rtpreset">Как у всех</button>` : ""}</div>
       </section>
@@ -137,11 +141,12 @@
         if (a === "gift") { await api("POST", `/api/admin/user/${id}/grant`, { kind: "gift", gift: $("#auGift").value, wager, note }); toast("Подарок поставлен в выдачу"); }
         if (a === "msg") { const t = $("#auMsg").value.trim(); if (!t) return; await api("POST", `/api/admin/user/${id}/message`, { text: t }); toast("Отправлено"); }
         if (a === "rtp") {
-          const allv = Number($("#auRtpAll").value), modes = {};
-          all("[data-urtp]", body()).forEach((i) => { const v = Number(i.value); if (v >= 50 && v <= 99) modes[i.dataset.urtp] = v / 100; });
-          if (allv && (allv < 50 || allv > 99)) return toast("RTP от 50 до 99%");
-          await api("POST", `/api/admin/user/${id}/rtp`, { all: allv ? allv / 100 : 0, modes });
-          toast(allv || Object.keys(modes).length ? "Шансы игрока сохранены" : "Шансы как у всех");
+          const raw = $("#auRtpAll").value.trim(), allv = raw === "" ? null : Number(raw), modes = {};
+          let bad = allv != null && !(allv >= 0 && allv <= 100);
+          all("[data-urtp]", body()).forEach((i) => { if (i.value.trim() === "") return; const v = Number(i.value); if (v >= 0 && v <= 100) modes[i.dataset.urtp] = v / 100; else bad = true; });
+          if (bad) return toast("RTP от 0 до 100%");
+          await api("POST", `/api/admin/user/${id}/rtp`, { all: allv == null ? null : allv / 100, modes });
+          toast(allv != null || Object.keys(modes).length ? "Шансы игрока сохранены" : "Шансы как у всех");
         }
         if (a === "rtpreset") { await api("POST", `/api/admin/user/${id}/rtp`, { reset: true }); toast("Шансы как у всех"); }
         if (a === "ban") { if (!u.banned && !confirm(`Заблокировать ${u.name}?`)) return; await api("POST", `/api/admin/user/${id}/ban`, { on: !u.banned }); toast(u.banned ? "Разблокирован" : "Заблокирован"); }
@@ -292,8 +297,8 @@
     body().innerHTML = `<h4 class="adm-h">Шансы</h4>
       <section class="list adm-form">
         <label class="adm-lab">Отдача игрокам (RTP): <b id="asRv">${pct(s.rtp)}%</b>. Чем выше, тем чаще выигрывают. Преимущество казино: <b id="asEdge">${100 - pct(s.rtp)}%</b></label>
-        <input id="asRtp" type="range" min="80" max="99" step="1" value="${pct(s.rtp)}">
-        ${Object.keys(MODES).map((m) => `<div class="adm-mode"><span class="grow">${MODES[m]}</span><input type="number" inputmode="numeric" min="50" max="99" data-mode="${m}" placeholder="${pct(s.rtp)}" value="${s.modes[m] ? pct(s.modes[m]) : ""}"><i>%</i></div>`).join("")}
+        <div class="adm-mode"><input id="asRtp" type="range" min="0" max="100" step="1" value="${pct(s.rtp)}" class="grow"><input id="asRtpN" type="number" inputmode="numeric" min="0" max="100" value="${pct(s.rtp)}"><i>%</i></div>
+        ${Object.keys(MODES).map((m) => `<div class="adm-mode"><span class="grow">${MODES[m]}</span><input type="number" inputmode="numeric" min="0" max="100" data-mode="${m}" placeholder="${pct(s.rtp)}" value="${s.modes[m] != null ? pct(s.modes[m]) : ""}"><i>%</i></div>`).join("")}
         <p class="adm-note">Пустое поле: режим берёт общий RTP. Новые шансы включаются у игрока со следующего запуска приложения.</p>
       </section>
       <h4 class="adm-h">Функции</h4>
@@ -308,11 +313,13 @@
         <label class="adm-lab">Бонус за приглашённого друга, звёзд</label><input id="asRef" type="number" inputmode="numeric" value="${s.ref_bonus}">
       </section>
       <div class="adm-btns"><button data-act="save" class="main">Сохранить</button></div>`;
-    $("#asRtp").oninput = () => { $("#asRv").textContent = $("#asRtp").value + "%"; $("#asEdge").textContent = 100 - $("#asRtp").value + "%"; };
+    const syncR = (v) => { v = Math.max(0, Math.min(100, Math.round(Number(v) || 0))); $("#asRtp").value = v; $("#asRtpN").value = v; $("#asRv").textContent = v + "%"; $("#asEdge").textContent = 100 - v + "%"; };
+    $("#asRtp").oninput = () => syncR($("#asRtp").value);
+    $("#asRtpN").oninput = () => { if ($("#asRtpN").value !== "") syncR($("#asRtpN").value); };
     body().onclick = async (e) => {
       if (!e.target.closest('[data-act="save"]')) return;
       const modes = {};
-      all("[data-mode]", body()).forEach((i) => { const v = Number(i.value); if (v >= 50 && v <= 99) modes[i.dataset.mode] = v / 100; });
+      all("[data-mode]", body()).forEach((i) => { if (i.value.trim() === "") return; const v = Number(i.value); if (v >= 0 && v <= 100) modes[i.dataset.mode] = v / 100; });
       const flags = {};
       all("[data-k]", body()).forEach((i) => (flags[i.dataset.k] = i.checked));
       try {

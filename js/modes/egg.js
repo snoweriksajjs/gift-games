@@ -13,8 +13,7 @@
   const FREE = { id: "free", name: "Бесплатное", price: 0, c1: "#ffffff", c2: "#d6dbe6", tint: null };
   const LO = 0.3, HI = 3, TAPS = 3;
   // множитель содержимого: LO + (HI - LO) * roll^K, среднее равно HOUSE
-  const kOf = () => (HI - LO) / (A.rtp("egg") - LO) - 1;          // шансы из админки, свежие на каждое яйцо
-  const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, kOf());
+  const multOf = (roll) => A.rangeMult(roll, A.rtp("egg"), LO, HI);          // шансы из админки, свежие на каждое яйцо
   const freeValue = (roll) => Math.round(30 + 270 * Math.pow(roll, 3));   // бесплатное яйцо: от 30 до 300 звёзд
   const today = () => new Date().toISOString().slice(0, 10);
   // Перекраска стикера в цвет уровня: меняются только серые и белые цвета скорлупы,
@@ -169,7 +168,7 @@
     playTo(FRAMES[2], FRAMES[3]);                // скорлупа лопается, появляется утёнок
     await A.wait(A.REDUCED ? 100 : 1150);
     const value = free ? freeValue(round.roll) : t.price * multOf(round.roll);
-    const r = A.payout(value), m = free ? 1 : value / t.price;
+    const r = A.payout(value, free), m = free ? 1 : value / t.price;
     st.stats.eggs = (st.stats.eggs || 0) + 1;
     if (free || m >= 1) { st.stats.wins++; st.stats.best = Math.max(st.stats.best, r.value); }
     st.egg = null; A.save();
