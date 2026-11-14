@@ -104,6 +104,19 @@ def _star(draw, cx, cy, r, fill):
     draw.polygon(pts, fill=fill)
 
 
+def _tgstar(size):
+    """Звезда Telegram Stars (форма и цвета из клиента Telegram Web), картинка img/star.png с сайта."""
+    return _fetch(SITE + "img/star.png").resize((size, size), Image.LANCZOS)
+
+
+def _star_text(layer, draw, cx, cy, text, font, fill, size):
+    """Звезда и число рядом, вместе по центру точки (cx, cy)."""
+    tw = draw.textlength(text, font=font)
+    x = cx - (size + 6 + tw) / 2
+    layer.alpha_composite(_tgstar(size), (int(x), int(cy - size / 2)))
+    draw.text((x + size + 6, cy), text, font=font, fill=fill, anchor="lm")
+
+
 def _rounded(size, radius, fill):
     w, h = size
     big = Image.new("RGBA", (w * 2, h * 2), (0, 0, 0, 0))
@@ -223,15 +236,18 @@ def render(d):
     bf = 92
     while bf > 50 and td.textlength(bal, font=_font("Bold", bf)) > 470:
         bf -= 4
-    _star(td, L + 36, 252, 36, (255, 200, 61))
+    txt.alpha_composite(_tgstar(74), (L - 2, 252 - 37))
     td.text((L + 86, 252), bal, font=_font("Bold", bf), fill=(255, 255, 255), anchor="lm")
 
-    stats = [(_fmt(len(gifts)), "подарков"), ("★ " + _short(value), "коллекция"), (_fmt(d.get("staked") or 0), "в стейкинге")]
+    stats = [(_fmt(len(gifts)), "подарков"), ("*" + _short(value), "коллекция"), (_fmt(d.get("staked") or 0), "в стейкинге")]
     sw = 172
     for i, (v, lab) in enumerate(stats):
         x = L + i * (sw + 12)
         txt.alpha_composite(_rounded((sw, 92), 20, (0, 0, 0, 70)), (x, 318))
-        td.text((x + sw / 2, 352), v, font=_font("Bold", 34), fill=(255, 255, 255), anchor="mm")
+        if v.startswith("*"):
+            _star_text(txt, td, x + sw / 2, 352, v[1:], _font("Bold", 34), (255, 255, 255), 32)
+        else:
+            td.text((x + sw / 2, 352), v, font=_font("Bold", 34), fill=(255, 255, 255), anchor="mm")
         td.text((x + sw / 2, 388), lab, font=_font("Medium", 20), fill=(255, 255, 255, 170), anchor="mm")
 
     tiles = []
@@ -245,7 +261,7 @@ def render(d):
         except Exception:
             gi = None
         tiles.append((x, tile, gi, i))
-        td.text((x + sw / 2, 628), "★ " + _short(g["price"]), font=_font("SemiBold", 24), fill=(255, 210, 80), anchor="mm")
+        _star_text(txt, td, x + sw / 2, 628, _short(g["price"]), _font("SemiBold", 25), (255, 255, 255), 26)
     if not gifts:
         td.text((L, 470), "Подарков пока нет.\nВыиграйте первый в DuckChance.", font=_font("Medium", 28), fill=(255, 255, 255, 190), spacing=10)
 
@@ -308,7 +324,143 @@ def render(d):
     return out
 
 
+def render_ref(d):
+    """Реферальный баннер: «<имя> зовёт тебя», заголовок, кнопка «Забрать бесплатно» и парящие дорогие подарки.
+    d: name, photo. Возвращает (mp4, jpg первого кадра)."""
+    out = os.path.join(CACHE, f"ref_{_key({'ref': 2, **d})}.mp4")
+    thumb = out[:-4] + ".jpg"
+    if os.path.exists(out) and os.path.getsize(out) > 0 and os.path.exists(thumb):
+        return out, thumb
+    cat = list(_catalog().values())
+    pick = lambda name: max((g for g in cat if g["gift"] == name), key=lambda g: g["price"], default=None)
+    hero = [g for g in (pick("Plush Pepe"), pick("Durov's Cap"), pick("Heart Locket")) if g]
+
+    # фон: тёплая темнота с золотым светом справа
+    base = _radial((W, H), (930, 330), (74, 58, 22), (11, 11, 13), 820)
+    # звёзды Telegram узором по кругу вокруг подарков
+    star = _tgstar(40)
+    rings = [(220, 9, .30, 34, 1), (330, 14, .18, 30, -1), (450, 20, .10, 26, 1)]
+    ring_imgs = [(r, n, _with_alpha(star.resize((sz, sz), Image.LANCZOS), o), sz, dr) for r, n, o, sz, dr in rings]
+
+    txt = Image.new("RGBA", (W, H))
+    td = ImageDraw.Draw(txt)
+    L = 70
+    try:
+        mark = _fetch(SITE + "img/logo-mark.png")
+        word = _fetch(SITE + "img/logo-word.png")
+        mark = mark.resize((int(mark.width * 40 / mark.height), 40), Image.LANCZOS)
+        word = word.resize((int(word.width * 26 / word.height), 26), Image.LANCZOS)
+        txt.alpha_composite(mark, (L, 44))
+        txt.alpha_composite(word, (L + mark.width + 12, 51))
+    except Exception:
+        pass
+    # плашка «Имя зовёт тебя»
+    name = (d.get("name") or "Друг").strip()[:18]
+    inv = f"{name} зовёт тебя"
+    f = _font("SemiBold", 26)
+    pw = int(td.textlength(inv, font=f)) + 92
+    txt.alpha_composite(_rounded((pw, 56), 28, (255, 255, 255, 34)), (L, 112))
+    try:
+        av = _circle(_fetch(d["photo"]), 40) if d.get("photo") else None
+    except Exception:
+        av = None
+    if av is None:
+        av = _circle(Image.new("RGBA", (40, 40), (253, 211, 17, 255)), 40)
+        ImageDraw.Draw(av).text((20, 21), name[:1].upper(), font=_font("Bold", 22), fill=(20, 20, 20), anchor="mm")
+    txt.alpha_composite(av, (L + 8, 120))
+    td.text((L + 60, 140), inv, font=f, fill=(255, 255, 255), anchor="lm")
+    # заголовок
+    hf = _font("ExtraBold", 74)
+    td.text((L, 196), "Выбивай", font=hf, fill=(255, 255, 255))
+    td.text((L, 278), "NFT-подарки", font=hf, fill=(253, 211, 17))
+    td.text((L, 360), "Telegram", font=hf, fill=(255, 255, 255))
+    sf = _font("Medium", 30)
+    td.text((L, 466), "Каждый день бесплатное яйцо", font=sf, fill=(255, 255, 255, 215))
+    td.text((L, 506), "с подарком внутри", font=sf, fill=(255, 255, 255, 215))
+
+    cta_text = "Забрать бесплатно"
+    cf = _font("Bold", 32)
+    cw = int(td.textlength(cta_text, font=cf)) + 110
+    cta = _rounded((cw, 72), 36, (253, 211, 17, 255))
+    cd = ImageDraw.Draw(cta)
+    cd.text((34, 36), cta_text, font=cf, fill=(17, 17, 17), anchor="lm")
+    ax = cw - 50
+    cd.line([(ax - 12, 36), (ax + 10, 36)], fill=(17, 17, 17), width=5)
+    cd.line([(ax + 1, 26), (ax + 11, 36), (ax + 1, 46)], fill=(17, 17, 17), width=5, joint="curve")
+
+    # подарки на подсвеченных подложках
+    spots = [(905, 340, 300), (1092, 150, 150), (1075, 545, 150)]
+    tiles = []
+    for (cx, cy, sz), g in zip(spots, hero):
+        glow = Image.new("RGBA", (sz * 2, sz * 2))
+        gc = _hex(g.get("c1"), "#888888")
+        gd = ImageDraw.Draw(glow)
+        for i in range(30, 0, -1):
+            r = sz * i / 30
+            gd.ellipse((sz - r, sz - r, sz + r, sz + r), fill=gc + (int(10 * (30 - i) / 30 + 2),))
+        disk = _circle(_radial((sz, sz), (sz / 2, sz * .4), gc, _hex(g.get("c2"), "#444444"), sz * .8), sz)
+        try:
+            gi = _fetch(g["img"]).resize((int(sz * .82), int(sz * .82)), Image.LANCZOS)
+        except Exception:
+            gi = None
+        tiles.append((cx, cy, sz, glow, disk, gi))
+    twinkles = [(760, 120, 26, 0), (1180, 330, 22, .3), (820, 600, 24, .6), (990, 70, 20, .15), (760, 450, 18, .45), (1180, 640, 20, .8)]
+
+    band = Image.new("RGBA", (120, 140))
+    bd = ImageDraw.Draw(band)
+    for x in range(120):
+        bd.line([(x, 0), (x, 140)], fill=(255, 255, 255, int(120 * math.exp(-((x - 60) / 24) ** 2))))
+    band = band.rotate(-20, expand=True, resample=Image.BICUBIC)
+
+    tmp = tempfile.mkdtemp(dir=CACHE)
+    n = FPS * SECONDS
+    for fi in range(n):
+        t = fi / n
+        fr = base.copy()
+        for r, cnt, img, sz, dr in ring_imgs:
+            off = dr * t * (2 * math.pi / cnt)
+            for i in range(cnt):
+                a = i / cnt * 2 * math.pi + off
+                fr.alpha_composite(img, (int(905 + math.cos(a) * r * 1.1 - sz / 2), int(340 + math.sin(a) * r * .85 - sz / 2)))
+        for k, (cx, cy, sz, glow, disk, gi) in enumerate(tiles):
+            dy = int((10 if k == 0 else 7) * math.sin(t * 2 * math.pi + k * 2.1))
+            fr.alpha_composite(glow, (cx - sz, cy - sz + dy))
+            fr.alpha_composite(disk, (cx - sz // 2, cy - sz // 2 + dy))
+            if gi is not None:
+                ang = 4 * math.sin(t * 2 * math.pi + k)
+                gr = gi.rotate(ang, resample=Image.BICUBIC, expand=True)
+                fr.alpha_composite(gr, (cx - gr.width // 2, cy - gr.height // 2 + dy))
+        for x, y, sz, ph in twinkles:
+            k = .55 + .45 * math.sin((t + ph) * 2 * math.pi)
+            s2 = max(4, int(sz * (.6 + .4 * k)))
+            fr.alpha_composite(_with_alpha(star.resize((s2, s2), Image.LANCZOS), k), (x - s2 // 2, y - s2 // 2))
+        fr.alpha_composite(txt)
+        # кнопка дышит, по ней пробегает блик
+        pulse = 1 + .035 * math.sin(t * 4 * math.pi)
+        c2 = cta.resize((int(cw * pulse), int(72 * pulse)), Image.LANCZOS)
+        if t < .5:
+            c2 = c2.copy()
+            sh = Image.new("RGBA", c2.size)
+            sh.alpha_composite(band, (int(-160 + (c2.width + 200) * t / .5), -30))
+            sh.putalpha(Image.composite(sh.getchannel("A"), Image.new("L", c2.size, 0), c2.getchannel("A").point(lambda a: 255 if a > 128 else 0)))
+            c2.alpha_composite(sh)
+        fr.alpha_composite(c2, (int(L + cw / 2 - c2.width / 2), int(576 - c2.height / 2 + 4)))
+        frame = fr.convert("RGB")
+        frame.save(os.path.join(tmp, f"f{fi:03d}.png"), compress_level=1)
+        if fi == 0:
+            frame.save(thumb, quality=88)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(FPS), "-i", os.path.join(tmp, "f%03d.png"),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "22", "-preset", "veryfast", "-movflags", "+faststart", "-an", out + ".part.mp4"],
+                   check=True)
+    os.replace(out + ".part.mp4", out)
+    for f2 in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f2))
+    os.rmdir(tmp)
+    return out, thumb
+
+
 if __name__ == "__main__":      # проверка: python3 profile_card.py data.json
     import sys, time
     t0 = time.time()
-    print(render(json.load(open(sys.argv[1]))), f"{time.time() - t0:.1f} c")
+    d = json.load(open(sys.argv[1]))
+    print(render_ref(d) if d.get("ref") else render(d), f"{time.time() - t0:.1f} c")
