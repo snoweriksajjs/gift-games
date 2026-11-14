@@ -227,6 +227,7 @@
     msgsBox.innerHTML = "";
     input.value = ""; grow();
     view.hidden = false; void view.offsetWidth; view.classList.add("on");
+    grow();
     $("#pageChats").classList.add("pushed");
     document.body.style.overflow = "hidden";
     A.keepBack = true;
@@ -476,7 +477,8 @@
       renderMsgs(true); hap.soft();
     } catch (e) { fail(e); }
   }
-  function grow() { input.style.height = "auto"; input.style.height = Math.min(140, input.scrollHeight) + "px"; }
+  // высота поля по тексту; пока окно чата скрыто, браузер отдаёт 0, тогда оставляем обычную высоту
+  function grow() { input.style.height = "auto"; const h = input.scrollHeight; input.style.height = h ? Math.min(140, h) + "px" : ""; }
   let typedAt = 0;
   function typed() {
     if (!cur || Date.now() - typedAt < 3000 || !input.value.trim()) return;

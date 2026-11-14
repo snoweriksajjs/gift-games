@@ -5,7 +5,8 @@
   const A = window.App, { $, STAR, fmt, fmtS, pct, xf } = A;
   // Шанс раунда подобран так, чтобы средний возврат был равен HOUSE:
   // (1 - P) * 2P / (1 - 2P) = HOUSE.
-  const H = A.rtp("streak"), P = ((2 + 2 * H) - Math.sqrt((2 + 2 * H) * (2 + 2 * H) - 8 * H)) / 4;
+  const chanceOf = (H) => ((2 + 2 * H) - Math.sqrt((2 + 2 * H) * (2 + 2 * H) - 8 * H)) / 4;
+  let P = chanceOf(A.rtp("streak"));      // пересчитывается перед каждой серией, если админ поменял шансы
   const MAX_WINS = 10;
   let dial, running = false, wins = 0, bet = 0;
 
@@ -28,6 +29,7 @@
 
   function render() {
     if (running) return;
+    P = chanceOf(A.rtp("streak"));
     const v = A.stakeValue();
     wins = 0;
     $("#streakCount").textContent = 0;
@@ -91,6 +93,6 @@
     enter() { render(); },
     onStake() { if (!running && (A.stakeValue() || !wins)) render(); else if (!running) A.setCta({ html: "Выберите ставку", disabled: true, fn: play }); },
     lockStake() { return running; },
-    P,
+    get P() { return P; },
   });
 })();

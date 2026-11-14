@@ -694,6 +694,8 @@ img.a-ball-in { display: block; width: 100%; height: 100%; }
 .nm-gift { width: 18px; height: 18px; object-fit: contain; flex: none; }
 .ava { background-size: cover; background-position: center; }
 .ava.tint { background: linear-gradient(hsl(var(--h) 72% 66%), hsl(var(--h) 62% 50%)); }
+/* фото всегда целиком по кругу, даже если у аватарки есть цветная заглушка */
+.ava[style*="background-image"] { background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }
 .ava.sm { width: 32px; height: 32px; font-size: 13px; }
 /* рамка аватарки у редких коллекций */
 .ava.aring { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--c1, #f2b21c); }
@@ -862,7 +864,7 @@ img.a-ball-in { display: block; width: 100%; height: 100%; }
 .cv-attach svg { transform: rotate(45deg); }
 .cv-field { flex: 1; min-width: 0; display: flex; border-radius: 20px; background: var(--bg); border: .5px solid var(--sep); transition: border-color .2s, box-shadow .2s; }
 .cv-field:focus-within { border-color: color-mix(in srgb, var(--btn) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--btn) 12%, transparent); }
-.cv-field textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: none; padding: 8px 14px; font: inherit; font-size: 16px; line-height: 21px; color: var(--text); max-height: 140px; transition: height .12s ease; }
+.cv-field textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: none; padding: 8px 14px; font: inherit; font-size: 16px; line-height: 21px; color: var(--text); min-height: 37px; max-height: 140px; display: block; transition: height .12s ease; }
 .cv-send { width: 38px; height: 38px; border-radius: 50%; background: var(--btn); color: var(--btn-text); display: grid; place-items: center; flex: none;
   transition: transform .26s cubic-bezier(.3, 1.6, .5, 1), opacity .18s, width .2s, margin .2s; }
 .cv-send svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transition: transform .26s; }
@@ -1035,7 +1037,7 @@ button.pn-line b { color: var(--link); }
 /* логотип DuckChance: утка в фирменном жёлтом, надпись цветом текста темы */
 .logo { display: flex; align-items: center; gap: 7%; margin: 0; }
 .logo-mark { height: 100%; width: auto; flex: none; }
-.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=21") center / contain no-repeat; mask: url("img/logo-word.png?v=21") center / contain no-repeat; }
+.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=22") center / contain no-repeat; mask: url("img/logo-word.png?v=22") center / contain no-repeat; }
 .bar-logo { height: 24px; gap: 7px; flex: none; }
 .splash-logo { position: absolute; left: 50%; bottom: calc(28px + var(--safe-b)); height: 20px; gap: 6px; transform: translateX(-50%); opacity: .9; animation: logoIn .5s ease both .15s; }
 @keyframes logoIn { from { opacity: 0; } }

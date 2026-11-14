@@ -13,7 +13,8 @@
   const CFG = (() => { try { return JSON.parse(localStorage.getItem("dc_cfg")) || {}; } catch { return {}; } })();
   const clampRtp = (v) => (typeof v === "number" && v >= 0.5 && v <= 0.99 ? v : 0.95);
   const HOUSE = clampRtp(CFG.rtp);     // доля, которая в среднем возвращается игрокам
-  const rtp = (mode) => clampRtp((CFG.modes || {})[mode] || HOUSE);
+  // свежие настройки с сервера (App.live) важнее сохранённых с прошлого запуска
+  const rtp = (mode) => { const L = App.live || CFG; return clampRtp((L.modes || {})[mode] || L.rtp || HOUSE); };
 
   const CATALOG = window.GIFTS || [];
   const byId = Object.fromEntries(CATALOG.map((s) => [s.id, s]));

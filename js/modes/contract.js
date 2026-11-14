@@ -4,8 +4,8 @@
   const A = window.App, { $, STAR, fmt, fmtS, xf } = A;
   const MIN = 3, MAX = 10, LO = 0.3, HI = 3;
   // множитель = LO + (HI - LO) * roll^K. K подобран так, чтобы среднее было равно HOUSE.
-  const K = (HI - LO) / (A.rtp("contract") - LO) - 1;
-  const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, K);
+  const kOf = () => (HI - LO) / (A.rtp("contract") - LO) - 1;     // шансы из админки, свежие на каждый раунд
+  const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, kOf());
   let signing = false;
 
   const items = () => A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => A.byId[it.id]);

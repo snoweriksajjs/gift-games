@@ -13,8 +13,8 @@
   const FREE = { id: "free", name: "Бесплатное", price: 0, c1: "#ffffff", c2: "#d6dbe6", tint: null };
   const LO = 0.3, HI = 3, TAPS = 3;
   // множитель содержимого: LO + (HI - LO) * roll^K, среднее равно HOUSE
-  const K = (HI - LO) / (A.rtp("egg") - LO) - 1;
-  const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, K);
+  const kOf = () => (HI - LO) / (A.rtp("egg") - LO) - 1;          // шансы из админки, свежие на каждое яйцо
+  const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, kOf());
   const freeValue = (roll) => Math.round(30 + 270 * Math.pow(roll, 3));   // бесплатное яйцо: от 30 до 300 звёзд
   const today = () => new Date().toISOString().slice(0, 10);
   // Перекраска стикера в цвет уровня: меняются только серые и белые цвета скорлупы,
