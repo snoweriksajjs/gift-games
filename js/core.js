@@ -8,7 +8,12 @@
   const SITE = "https://snoweriksajjs.github.io/gift-games";   // публичный адрес, нужен для карточек в сторис
   const ADMIN_ID = 8083284748;         // кому показывается админ-панель
   const CODE_KEY = "duckchance-codes-v1";   // ключ подписи промокодов. Он виден в коде сайта: с сервером подпись переедет туда
-  const HOUSE = 0.95;                  // доля, которая возвращается игрокам
+  // Настройки из админки. Сервер присылает их при каждом запуске, а применяются они со следующего запуска:
+  // шансы режимов считаются один раз при загрузке.
+  const CFG = (() => { try { return JSON.parse(localStorage.getItem("dc_cfg")) || {}; } catch { return {}; } })();
+  const clampRtp = (v) => (typeof v === "number" && v >= 0.5 && v <= 0.99 ? v : 0.95);
+  const HOUSE = clampRtp(CFG.rtp);     // доля, которая в среднем возвращается игрокам
+  const rtp = (mode) => clampRtp((CFG.modes || {})[mode] || HOUSE);
 
   const CATALOG = window.GIFTS || [];
   const byId = Object.fromEntries(CATALOG.map((s) => [s.id, s]));
@@ -450,6 +455,7 @@
     state.inv = state.inv.filter((it) => !stake.uids.has(it.uid));
     stake.uids.clear(); stake.stars = 0; balInput.value = 0;
     state.stats.wagered += value; state.stats.spins++;
+    if (state.wager && state.wager.need > state.wager.done) state.wager.done += value;   // отыгрыш промокодов
     save(); renderBalance(); renderStake();
     return { value, gifts, stars };
   }
@@ -626,6 +632,7 @@
   };
   function buyStars(n) {
     if (!INVOICES[n]) return;
+    if (App.live && App.live.deposits === false) return toast("Пополнение временно отключено");
     if (!inTg || !tg.openInvoice) return toast("Пополнение работает внутри Telegram");
     hap.soft();
     tg.openInvoice(INVOICES[n], (status) => {
@@ -638,7 +645,13 @@
   }
   $("#amounts").addEventListener("click", (e) => { const b = e.target.closest("[data-a]"); if (b) buyStars(Number(b.dataset.a)); });
   all("[data-deposit]").forEach((b) => b.addEventListener("click", () => openSheet($("#depositSheet"))));
-  $("#withdrawBtn").addEventListener("click", () => openSheet($("#withdrawSheet")));
+  $("#withdrawBtn").addEventListener("click", () => {
+    const w = state.wager, left = w ? Math.max(0, Math.ceil(w.need - w.done)) : 0;
+    $("#wdWager").hidden = !left;
+    if (left) $("#wdWager").innerHTML = `Чтобы вывести подарки, отыграйте ещё ${STAR} <b>${fmt(left)}</b>. Отыграно ${fmt(w.done)} из ${fmt(w.need)}.<i style="width:${Math.min(100, (w.done / w.need) * 100)}%"></i>`;
+    $("#wdBtn").textContent = (App.live && App.live.withdraw_note) || "Вывод подарков скоро";
+    openSheet($("#withdrawSheet"));
+  });
 
   // ---------- карточка подарка ----------
   const giftSheet = $("#giftSheet");
@@ -752,9 +765,12 @@
     { id: "friend", duck: "hug", title: "Пригласить друга", reward: REF_BONUS, goal: 1, get: () => state.refs || 0 },
   ];
   const taskDone = (t) => (t.daily ? state.claimed[t.id] === today() : !!state.claimed[t.id]);
+  // задания из админки: подписка на канал или чат, переход по ссылке. Выполнение проверяет сервер.
+  const customTasks = () => ((App.live && App.live.tasks) || []).map((c) => ({ id: "c" + c.id, sid: c.id, custom: c.kind, target: c.target, duck: c.kind === "sub" ? "phone" : "link",
+    title: c.title, reward: c.reward, goal: 1, get: () => (state.opened && state.opened["c" + c.id] ? 1 : 0), serverDone: c.done }));
   function renderTasks() {
     let ready = 0;
-    const rows = TASKS.map((t) => {
+    const rows = [...customTasks(), ...TASKS].map((t) => {
       const done = taskDone(t), cur = Math.min(t.goal, t.get()), can = !done && cur >= t.goal;
       if (can) ready++;
       return { t, done, cur, can };
@@ -769,13 +785,31 @@
           <span class="t-sub">+${fmt(t.reward)} ${STAR}${t.goal > 1 && !done ? ` <span>${cur} из ${t.goal}</span>` : ""}</span>
           ${t.goal > 1 && !done ? `<span class="t-bar"><i style="width:${(cur / t.goal) * 100}%"></i></span>` : ""}
         </div>
-        <button class="mini-btn" data-task="${t.id}" ${can ? "" : "disabled"}>${done ? (t.daily ? "Завтра" : "Получено") : can ? "Забрать" : "В процессе"}</button>
+        ${t.custom ? `<button class="mini-btn" data-task="${t.id}" ${done ? "disabled" : ""}>${done ? "Получено" : can ? "Проверить" : t.custom === "sub" ? "Подписаться" : "Открыть"}</button>`
+          : `<button class="mini-btn" data-task="${t.id}" ${can ? "" : "disabled"}>${done ? (t.daily ? "Завтра" : "Получено") : can ? "Забрать" : "В процессе"}</button>`}
       </div>`).join("");
     initDucks($("#taskList"));
   }
   $("#taskList").addEventListener("click", (e) => {
     const row = e.target.closest(".task"); if (row) playDuck($(".duck", row), false);
     const b = e.target.closest("[data-task]"); if (!b || b.disabled) return;
+    const ct = customTasks().find((x) => x.id === b.dataset.task);
+    if (ct) {
+      if (taskDone(ct)) return;
+      if (!ct.get()) {          // сначала открыть канал или ссылку, потом проверить
+        const url = ct.custom === "sub" ? (ct.target.startsWith("@") ? `https://t.me/${ct.target.slice(1)}` : ct.target) : ct.target;
+        state.opened = state.opened || {}; state.opened[ct.id] = 1; save();
+        try { if (inTg && /^https:\/\/t\.me\//.test(url)) tg.openTelegramLink(url); else if (inTg) tg.openLink(url); else window.open(url, "_blank"); } catch {}
+        return setTimeout(renderTasks, 600);
+      }
+      if (!App.checkTask) return toast("Нет связи с сервером");
+      b.disabled = true;
+      App.checkTask(ct.sid).then((reward) => {
+        state.claimed[ct.id] = true; state.balance += reward; save();
+        hap.coin(); renderBalance(true); renderTasks(); renderStake(); toast(`+${fmt(reward)} звёзд`);
+      }, (msg) => { b.disabled = false; toast(msg); });
+      return;
+    }
     const t = TASKS.find((x) => x.id === b.dataset.task);
     if (!t || taskDone(t) || t.get() < t.goal) return;
     state.claimed[t.id] = t.daily ? today() : true;
@@ -840,6 +874,22 @@
     if (open === "profile") setTimeout(() => showTab("pageProfile"), 300);
     const code = q.get("code");
     if (code) setTimeout(() => redeemCode(code, (state.codes || []).includes(code)), 1400);
+  }
+
+  // ---------- награды с сервера: промокоды и выдачи админа ----------
+  // wager: во сколько раз нужно прокрутить сумму награды, прежде чем выводить подарки
+  function applyReward(r, from) {
+    let value = 0, text = "";
+    if (r.kind === "stars" || r.kind === "add") { state.balance = Math.max(0, state.balance + r.amount); value = Math.abs(r.amount); text = `${r.amount >= 0 ? "+" : ""}${fmt(r.amount)} звёзд`; }
+    else if (r.kind === "set") { value = Math.max(0, r.amount - state.balance); state.balance = Math.max(0, r.amount); text = `Баланс: ${fmt(r.amount)} звёзд`; }
+    else if ((r.kind === "gift") && byId[r.gift]) { grant(byId[r.gift]); value = byId[r.gift].price; text = `${byId[r.gift].gift} #${byId[r.gift].num}`; }
+    else return;
+    if (r.wager > 0 && value > 0) {
+      state.wager = state.wager || { need: 0, done: 0 };
+      state.wager.need += value * r.wager;
+    }
+    save(); hap.coin(); renderBalance(true); renderStake(); renderProfile(); renderTasks();
+    toast(`${from}: ${text}${r.wager > 0 ? `, отыгрыш ×${r.wager}` : ""}`);
   }
 
   // ---------- профиль ----------
@@ -941,7 +991,12 @@
   // ---------- промокод ----------
   function initPromo() {
     $("#promoBtn").addEventListener("click", () => { $("#promoInput").value = ""; openSheet($("#promoSheet")); });
-    $("#promoGo").addEventListener("click", () => { if (redeemCode($("#promoInput").value)) closeSheet(); });
+    $("#promoGo").addEventListener("click", () => {
+      const v = $("#promoInput").value.trim();
+      if (/^[PR]-\d+-[A-Za-z0-9]+-[0-9a-f]{10}$/.test(v) || !App.redeemPromo) { if (redeemCode(v)) closeSheet(); return; }
+      if (!v) return toast("Введите промокод");
+      App.redeemPromo(v).then(() => closeSheet(), (msg) => { toast(msg); hap.lose(); });
+    });
   }
 
   // ---------- админ-панель ----------
@@ -957,7 +1012,7 @@
       const dep = (state.deposits || []).reduce((a, d) => a + d.n, 0);
       $("#admInfo").innerHTML = `Баланс ${STAR} ${fmt(state.balance)} · подарков ${state.inv.length} · игр ${state.stats.spins} · пополнено ${STAR} ${fmt(dep)}`;
     };
-    row.addEventListener("click", () => { info(); $("#admGift").innerHTML = byPrice.map((g) => `<option value="${g.id}">${g.gift} · ${g.model} · ${fmtS(g.price)}</option>`).join(""); openSheet($("#adminSheet")); });
+    row.addEventListener("click", () => { if (App.openAdmin) return App.openAdmin(); info(); $("#admGift").innerHTML = byPrice.map((g) => `<option value="${g.id}">${g.gift} · ${g.model} · ${fmtS(g.price)}</option>`).join(""); openSheet($("#adminSheet")); });
     $("#admGive").addEventListener("click", () => {
       const n = num("#admStars"); if (!n) return toast("Введите сумму");
       state.balance = Math.max(0, state.balance + n); save(); hap.coin(); renderBalance(true); renderStake(); info();
@@ -1008,7 +1063,7 @@
   }
 
   const App = window.App = {
-    HOUSE, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
+    HOUSE, rtp, CFG, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
     $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
     hap, snd, duckData, makeCode, redeemCode, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,
@@ -1016,7 +1071,7 @@
     openSheet, closeSheet, get sheet() { return sheetEl; },
     stake, stakeValue, takeStake, stakeChips, renderStake, renderBalance,
     showPrize, showMiss, log, renderFeed, renderTasks, renderProfile, openGift, setCta,
-    locked, invTile, bannerLook, tg, BOT_USERNAME, get tab() { return tab; },
+    locked, invTile, bannerLook, tg, BOT_USERNAME, get tab() { return tab; }, applyReward, buyStars, live: null,
     registerMode(name, m) { modes[name] = m; }, showMode, start,
     mode: null, modeName: "", busy: false, pressed: false,
   };

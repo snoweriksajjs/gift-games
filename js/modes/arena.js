@@ -204,11 +204,11 @@
     lastWinner = wi;
     render(); setHot(-1);
     const stats = A.state().stats, me = players[0];
-    A.log({ mode: "arena", win: !!w.me, bet, id: null, mult: w.me ? (total * A.HOUSE) / bet : 0, ...round,
+    A.log({ mode: "arena", win: !!w.me, bet, id: null, mult: w.me ? (total * A.rtp("arena")) / bet : 0, ...round,
       text: `Арена, игроков ${players.length}, банк ${fmt(total)}. Ваша доля ${pct(me.share)}, победил ${w.me ? "вы" : w.name}` });
     await A.wait(A.REDUCED ? 50 : 650);
     if (w.me) {
-      const r = A.payout(total * A.HOUSE);
+      const r = A.payout(total * A.rtp("arena"));
       stats.wins++; stats.arenaWins++; stats.best = Math.max(stats.best, r.value); A.save();
       A.showPrize({ gift: r.gift, uid: r.uid, stars: r.stars, sub: `банк ${fmtS(total)}` });
     } else {

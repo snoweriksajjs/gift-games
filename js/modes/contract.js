@@ -4,7 +4,7 @@
   const A = window.App, { $, STAR, fmt, fmtS, xf } = A;
   const MIN = 3, MAX = 10, LO = 0.3, HI = 3;
   // множитель = LO + (HI - LO) * roll^K. K подобран так, чтобы среднее было равно HOUSE.
-  const K = (HI - LO) / (A.HOUSE - LO) - 1;
+  const K = (HI - LO) / (A.rtp("contract") - LO) - 1;
   const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, K);
   let signing = false;
 

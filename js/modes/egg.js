@@ -13,7 +13,7 @@
   const FREE = { id: "free", name: "Бесплатное", price: 0, c1: "#ffffff", c2: "#d6dbe6", tint: null };
   const LO = 0.3, HI = 3, TAPS = 3;
   // множитель содержимого: LO + (HI - LO) * roll^K, среднее равно HOUSE
-  const K = (HI - LO) / (A.HOUSE - LO) - 1;
+  const K = (HI - LO) / (A.rtp("egg") - LO) - 1;
   const multOf = (roll) => LO + (HI - LO) * Math.pow(roll, K);
   const freeValue = (roll) => Math.round(30 + 270 * Math.pow(roll, 3));   // бесплатное яйцо: от 30 до 300 звёзд
   const today = () => new Date().toISOString().slice(0, 10);
@@ -62,7 +62,7 @@
 
   const egg = () => A.state().egg || null;
   const tierOf = (id) => (id === "free" ? FREE : TIERS.find((t) => t.id === id) || TIERS[0]);
-  const freeReady = () => A.state().freeEgg !== today();
+  const freeReady = () => A.state().freeEgg !== today() && !(A.live && A.live.free_egg === false);
 
   function paint(t, taps) {
     const e = $("#eggArt");

@@ -29,6 +29,8 @@
     if (!r.ok) throw Object.assign(new Error(j.error || "error"), { status: r.status });
     return j;
   }
+  A.api = (m, p, b) => call(m, p, b);       // для админки
+  A.apiReady = () => canUse;
   const fail = (e) => toast(e && e.status === 429 ? "Слишком часто, подождите немного" : e && e.status === 409 ? "Это имя уже занято"
     : e && e.status === 403 ? "Недостаточно прав" : "Нет связи с сервером");
 
@@ -325,6 +327,7 @@
     return short ? t.replace(/<[^>]+>/g, "") : t;
   }
 
+  const CLOCK = `<svg class="tick clock" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.6" /><path d="M6 3.4V6l1.8 1.1" /></svg>`;
   const ICON_REPLY = `<svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" /></svg>`;
   function bubble(m, prev, next) {
     if (m.kind === "service") {
@@ -345,7 +348,7 @@
     const q = m.reply && msgs.find((x) => x.id === m.reply && x.kind !== "deleted");
     const qg = q && !isChannel && styleOf(q.user.look);
     const quote = q ? `<span class="m-quote ${qg ? "styled" : ""}" data-goto="${q.id}" style="${qg ? vars(qg) : `--h:${hue(q.user.id)}`}"><b>${esc(isChannel ? cur.title : q.user.name)}</b><span>${q.kind === "photo" ? "Фото" : q.gift ? "Подарок" : esc(q.text.slice(0, 90))}</span></span>` : "";
-    const meta = `<span class="m-meta"><time>${hhmm(m.created)}</time>${mine ? tick(cur.kind === "dm" && m.id <= peerRead) : ""}</span>`;
+    const meta = `<span class="m-meta"><time>${hhmm(m.created)}</time>${mine ? (m.pending ? CLOCK : tick(cur.kind === "dm" && m.id <= peerRead)) : ""}</span>`;
     let body = "", cls = "";
     if (m.kind === "photo" && m.data && photoOk(m.data.url)) {
       cls = m.text ? "photo cap" : "photo";
@@ -361,7 +364,7 @@
       cls = "invite";
       body = inviteCard(m.data.card) + (m.text ? `<span class="m-text">${esc(m.text)}</span>` : "");
     } else body = `<span class="m-text">${esc(m.text)}</span>`;
-    const pop = shownIds.size && !shownIds.has(m.id) ? "pop" : "";
+    const pop = m.pending && !m.popped ? (m.popped = true, "pop send") : shownIds.size && !shownIds.has(m.id) ? "pop" : "";
     return `<div class="m-row ${mine ? "me" : ""} ${first ? "first" : ""} ${last ? "last" : ""} ${pop}" data-row="${m.id}">
       ${showAva ? (last ? `<span class="m-ava" data-user="${m.user.id}">${ava(m.user, "sm")}</span>` : `<span class="m-ava"></span>`) : ""}
       <div class="msg ${cls} ${g ? "styled" : ""} ${isChannel ? "post" : ""}" data-mid="${m.id}" style="${g ? vars(g) : ""}">
@@ -403,12 +406,16 @@
   async function pullMessages(first) {
     if (!cur || pulling) return;
     pulling = true;
-    const id = cur.id, after = msgs.length ? msgs[msgs.length - 1].id : 0;
+    const real = msgs.filter((x) => !x.pending), id = cur.id, after = real.length ? real[real.length - 1].id : 0;
     try {
       const r = await call("GET", `/api/chat/${id}/messages?` + (after ? `after=${after}&` : "") + (lastNow ? `since=${lastNow}` : ""));
       if (!cur || cur.id !== id) return;
       lastNow = r.now;
-      const fresh = r.messages.filter((m) => !msgs.some((x) => x.id === m.id));
+      const fresh = r.messages.filter((m) => !msgs.some((x) => x.id === m.id)).filter((m) => {
+        const t = m.user.id === myId && msgs.find((x) => x.pending && x.text === m.text);
+        if (t) { shownIds.add(m.id); msgs[msgs.indexOf(t)] = m; return false; }   // своё сообщение пришло раньше ответа
+        return true;
+      });
       const gone = (r.deleted || []).filter((d) => { const m = msgs.find((x) => x.id === d); if (m && m.kind !== "deleted") { m.kind = "deleted"; return true; } return false; });
       const readChanged = (r.peer_read || 0) !== peerRead;
       peerRead = r.peer_read || 0;
@@ -433,16 +440,32 @@
     $("#cvDown").classList.toggle("on", far);
     $("#cvDownN").hidden = !unseen; $("#cvDownN").textContent = unseen;
   }
+  // отправка без ожидания: сообщение сразу в чате с часиками, после ответа сервера часики меняются на галочку
+  let tmpSeq = 0;
   async function send() {
     const text = input.value.trim();
     if (!text || !canPost()) return;
     input.value = ""; grow(); syncFoot();
     const reply = replyTo; setReply(null);
+    const chatId = cur.id, tmp = { id: "t" + ++tmpSeq, chat: chatId, pending: true, kind: "text", text, reply, data: {}, created: Math.floor(Date.now() / 1000),
+      user: { id: myId, name: user ? user.first_name : "Вы", photo: user && user.photo_url, look: A.bannerLook() } };
+    msgs.push(tmp);
+    renderMsgs(true); hap.soft();
+    const btn = $("#cvSend"); btn.classList.remove("fly"); void btn.offsetWidth; btn.classList.add("fly");
     try {
-      const m = await call("POST", `/api/chat/${cur.id}/messages`, { text, reply });
-      if (!msgs.some((x) => x.id === m.id)) msgs.push(m);
-      renderMsgs(true); hap.soft();
-    } catch (e) { input.value = text; grow(); syncFoot(); fail(e); }
+      const m = await call("POST", `/api/chat/${chatId}/messages`, { text, reply });
+      if (!cur || cur.id !== chatId) return;
+      const i = msgs.indexOf(tmp);
+      shownIds.add(m.id);
+      if (msgs.some((x) => x.id === m.id)) { if (i >= 0) msgs.splice(i, 1); }   // опрос успел раньше
+      else if (i >= 0) msgs[i] = m; else msgs.push(m);
+      renderMsgs(false);
+    } catch (e) {
+      const i = msgs.indexOf(tmp); if (i >= 0) msgs.splice(i, 1);
+      renderMsgs(false);
+      if (!input.value) { input.value = text; grow(); syncFoot(); }
+      fail(e);
+    }
   }
   async function sendPhoto() {
     try {
@@ -1221,9 +1244,57 @@
     lookT = setTimeout(() => {
       const body = { look: A.bannerLook(), gifts: giftIds(), balance: Math.floor(st().balance), staked: st().inv.filter((x) => x.stake).length }, j = JSON.stringify(body);
       if (j === sent && !force) return;
-      call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; paintHandle(); if (r.pending) claimIncoming(); }).catch(() => {});
+      call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; paintHandle(); if (r.pending) claimIncoming(); if (r.grants) claimGrants(); }).catch(() => {});
     }, force ? 0 : 1200);
   }
+  // ---------- настройки из админки, выдачи, промокоды, задания ----------
+  async function loadConfig() {
+    let c;
+    try { c = await call("GET", "/api/config"); } catch { return; }
+    A.live = c;
+    try { localStorage.setItem("dc_cfg", JSON.stringify({ rtp: c.rtp, modes: c.modes })); } catch {}   // шансы: со следующего запуска
+    const t = $("#refTerms"); if (t) t.textContent = `${fmt(c.ref_bonus)} звёзд за каждого друга, который запустит бота по вашей ссылке`;
+    $("#adminBtn").hidden = !c.admin;
+    A.isAdmin = c.admin;
+    lockScreen(c.banned ? "Доступ ограничен" : c.maintenance ? "Технические работы" : "", c.banned ? "Ваш аккаунт заблокирован. Напишите в поддержку бота." : c.maint_text);
+    A.renderTasks();
+  }
+  function lockScreen(title, text) {
+    let el = $("#lockScreen");
+    if (!title) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement("div"); el.id = "lockScreen"; el.className = "lock-screen"; document.body.appendChild(el); }
+    el.innerHTML = `<span class="duck xl" data-duck="${title === "Технические работы" ? "think" : "lock"}" data-loop></span><b>${esc(title)}</b><p>${esc(text || "")}</p>`;
+    A.initDucks(el); A.syncDucks();
+  }
+  let granting = false;
+  async function claimGrants() {
+    if (!canUse || granting) return;
+    granting = true;
+    try {
+      const { grants } = await call("GET", "/api/grants");
+      for (const g of grants) {
+        try { const r = await call("POST", `/api/grants/claim/${g.id}`, {}); A.applyReward(r, r.note || "От администрации"); } catch {}
+      }
+      if (grants.length) syncMe(true);
+    } catch {} finally { granting = false; }
+  }
+  A.redeemPromo = async (code) => {
+    try {
+      const r = await call("POST", "/api/promo", { code });
+      A.applyReward(r, "Промокод");
+      syncMe(true);
+    } catch (e) {
+      throw e.status === 404 ? "Такого промокода нет" : e.status === 409 ? "Вы уже активировали этот промокод" : e.status === 410 ? "Промокод закончился или истёк"
+        : e.status === 429 ? "Слишком много попыток, подождите" : "Нет связи с сервером";
+    }
+  };
+  A.checkTask = async (id) => {
+    try { return (await call("POST", "/api/task/check", { id })).reward; } catch (e) {
+      throw e.status === 412 ? "Сначала подпишитесь, потом проверьте" : e.status === 424 ? "Не получилось проверить подписку, попробуйте позже"
+        : e.status === 409 ? "Задание уже выполнено" : "Нет связи с сервером";
+    }
+  };
+
   // реферальный баннер: сервер рисует анимацию, Telegram даёт выбрать чат
   let sharing = false;
   A.shareRef = () => {
@@ -1344,6 +1415,7 @@
 
     paintHandle();
     if (!canUse) return;
+    loadConfig(); setInterval(loadConfig, 60000);
     syncMe(true);
     loadChats();
     setInterval(() => { if (A.tab !== "pageChats") loadChats(); }, 20000);

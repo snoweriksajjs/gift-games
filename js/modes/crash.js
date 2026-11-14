@@ -7,7 +7,7 @@
   const SPEED = 0.09;                       // множитель = e^(SPEED * секунды)
   const BET_MS = 6000, END_MS = 3000;
   const NAMES = ["Артём", "Лиза", "Макс", "Даша", "Тимур", "Ника", "Егор", "Соня", "Марк", "Алина", "Рома", "Вика"];
-  const crashPoint = (roll) => Math.min(1000, Math.max(1, Math.floor((A.HOUSE / (1 - roll)) * 100) / 100));
+  const crashPoint = (roll) => Math.min(1000, Math.max(1, Math.floor((A.rtp("crash") / (1 - roll)) * 100) / 100));
 
   let cv, ctx, W = 0, H = 0, raf = 0, active = false;
   let phase = "bet", phaseT = 0, round = null, cp = 1, m = 1, frameN = 0, lastNowId = null;

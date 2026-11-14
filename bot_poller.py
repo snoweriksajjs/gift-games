@@ -24,7 +24,7 @@ SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 BANNER = os.environ.get("BANNER", "https://snoweriksajjs.github.io/gift-games/img/logo-banner.jpg")
 CODE_KEY = os.environ.get("CODE_KEY", "duckchance-codes-v1")   # тот же ключ, что в js/core.js
 REF_BONUS = int(os.environ.get("REF_BONUS", "100"))
-VER = os.environ.get("APP_VER", "20")
+VER = os.environ.get("APP_VER", "21")
 LOG = os.environ.get("PAY_LOG", "payments.log")
 SEEN = os.environ.get("SEEN_FILE", "seen_users.json")
 STATE = os.environ.get("BOT_STATE", os.path.join(os.path.dirname(os.path.abspath(SEEN)), "bot_state.json"))
@@ -313,6 +313,139 @@ def send_invite(chat, uid, tg_user):
          reply_markup={"inline_keyboard": [[{"text": "Выбрать чат", "url": share_url(uid)}]]}, disable_web_page_preview=True)
 
 
+# ---------- рассылка и админ-меню ----------
+admin_wait = {}       # админ сейчас присылает сообщение для рассылки
+drafts = {}           # черновик рассылки: {admin: {"chat", "msg", "play", "ctl"}}
+
+
+def bc_markup(play):
+    return {"inline_keyboard": [[app_btn("Играть", icon="fire", style="primary")]]} if play else None
+
+
+def _deliver(targets, send_one, admin, title, ctl=None):
+    ok = bad = gone = 0
+    for i, uid in enumerate(targets):
+        try:
+            send_one(uid)
+            ok += 1
+        except urllib.error.HTTPError as err:
+            bad += 1
+            if err.code == 403:
+                gone += 1
+                with lock:
+                    state["subs"] = [x for x in state["subs"] if x != uid]
+        except Exception:
+            bad += 1
+        if ctl and (i + 1) % 25 == 0:
+            try:
+                call("editMessageText", chat_id=admin, message_id=ctl, text=f"{title}: {i + 1} из {len(targets)}…")
+            except Exception:
+                pass
+        time.sleep(0.05)          # не больше 20 сообщений в секунду
+    save_state()
+    report = f"{e('ok')} <b>{title} завершена</b>\n\nДоставлено: <b>{ok}</b>\nНе доставлено: <b>{bad}</b>" + (f" (заблокировали бота: {gone})" if gone else "")
+    try:
+        if ctl:
+            call("editMessageText", chat_id=admin, message_id=ctl, text=re.sub(r"<[^>]+>", "", report))
+        else:
+            send(admin, report)
+    except Exception:
+        pass
+    print(f"{title}: {ok} доставлено, {bad} нет", flush=True)
+
+
+def broadcast_html(admin, targets, text, photo, markup, test=False):
+    """Рассылка из админки в приложении: HTML-текст (с премиум-эмодзи), по желанию фото и кнопка."""
+    def one(uid):
+        if photo:
+            tg("sendPhoto", chat_id=uid, photo=photo, caption=text[:1024], parse_mode="HTML", **({"reply_markup": markup} if markup else {}))
+        else:
+            tg("sendMessage", chat_id=uid, text=text, parse_mode="HTML", **({"reply_markup": markup} if markup else {}))
+    _deliver(targets, one, admin, "Тестовая рассылка" if test else "Рассылка")
+
+
+def broadcast_copy(admin, targets, chat, msg, markup, title, ctl=None):
+    """Рассылка из бота: копия любого сообщения админа, со всем оформлением, эмодзи и вложениями."""
+    def one(uid):
+        call("copyMessage", chat_id=uid, from_chat_id=chat, message_id=msg, **({"reply_markup": markup} if markup else {}))
+    _deliver(targets, one, admin, title, ctl)
+
+
+def admin_menu(chat):
+    st = sys.modules.get("admin")
+    n = len(state["subs"])
+    send(chat, f"{e('cool')} <b>Админка DuckChance</b>\n\nПользователей бота: <b>{n}</b>\n\n"
+               "Рассылка: пришлите любое сообщение (текст с форматированием, премиум-эмодзи, фото, видео, файл), бот разошлёт его копию.",
+         reply_markup={"inline_keyboard": [[app_btn("Открыть админку", icon="cool", style="primary", admin="1")],
+                                           [{"text": "Статистика", "callback_data": "adm_stats"}, {"text": "Рассылка", "callback_data": "adm_bc"}]]})
+
+
+def admin_stats(chat):
+    st = sys.modules.get("admin")
+    if not st:
+        return send(chat, "Статистика недоступна")
+    d = st.stats()
+    f = lambda n: fmt(n)
+    send(chat, f"{e('money')} <b>Статистика</b>\n\n"
+               f"<b>Игроки</b>\nВсего: {f(d['users'])} · в боте: {f(d['bot_users'])}\nНовых за сутки: {f(d['new_day'])} · за неделю: {f(d['new_week'])}\n"
+               f"Активных за сутки: {f(d['active_day'])} · за неделю: {f(d['active_week'])} · онлайн: {f(d['online'])}\n\n"
+               f"<b>Деньги</b>\nПополнений: {f(d['payments'])} на {f(d['paid_stars'])} ⭐ (за сутки {f(d['paid_day'])} ⭐)\nЗвёзд на балансах: {f(d['balances'])} ⭐\n\n"
+               f"<b>Общение</b>\nГрупп: {f(d['chats'])} · каналов: {f(d['channels'])} · личных: {f(d['dms'])}\nСообщений: {f(d['messages'])} · передач подарков: {f(d['transfers'])}\n\n"
+               f"Промокодов активировано: {f(d['promo_uses'])} · заданий выполнено: {f(d['tasks_done'])}")
+
+
+def draft_controls(admin):
+    d = drafts[admin]
+    n = len(state["subs"])
+    kb = {"inline_keyboard": [
+        [{"text": ("Кнопка «Играть»: вкл" if d["play"] else "Кнопка «Играть»: выкл"), "callback_data": "adm_bc_play"}],
+        [{"text": "Отправить себе", "callback_data": "adm_bc_test"}, {"text": f"Разослать всем ({n})", "callback_data": "adm_bc_ask"}],
+        [{"text": "Отмена", "callback_data": "adm_bc_cancel"}]]}
+    return kb
+
+
+def on_admin_draft(m):
+    admin = m["from"]["id"]
+    admin_wait.pop(admin, None)
+    drafts[admin] = {"chat": m["chat"]["id"], "msg": m["message_id"], "play": True}
+    send(admin, f"{e('think')} <b>Черновик рассылки готов.</b> Сообщение выше уйдёт как есть: оформление, эмодзи и вложения сохранятся.",
+         reply_markup=draft_controls(admin))
+
+
+def on_admin_callback(q, data):
+    admin, chat, mid = q["from"]["id"], q["message"]["chat"]["id"], q["message"]["message_id"]
+    if data == "adm_stats":
+        return admin_stats(chat)
+    if data == "adm_bc":
+        admin_wait[admin] = "bc"
+        return send(chat, f"{e('point')} Пришлите сообщение для рассылки. Можно текст с форматированием и премиум-эмодзи, фото, видео, GIF, файл или голосовое.",
+                    reply_markup={"inline_keyboard": [[{"text": "Отмена", "callback_data": "adm_bc_cancel"}]]})
+    d = drafts.get(admin)
+    if data == "adm_bc_cancel":
+        admin_wait.pop(admin, None)
+        drafts.pop(admin, None)
+        return call("editMessageText", chat_id=chat, message_id=mid, text="Рассылка отменена.")
+    if not d:
+        return send(chat, "Черновик не найден, начните заново: /admin")
+    if data == "adm_bc_play":
+        d["play"] = not d["play"]
+        return call("editMessageReplyMarkup", chat_id=chat, message_id=mid, reply_markup=draft_controls(admin))
+    if data == "adm_bc_test":
+        threading.Thread(target=broadcast_copy, args=(admin, [admin], d["chat"], d["msg"], bc_markup(d["play"]), "Тестовая рассылка"), daemon=True).start()
+        return
+    if data == "adm_bc_ask":
+        n = len(state["subs"])
+        return call("editMessageReplyMarkup", chat_id=chat, message_id=mid, reply_markup={"inline_keyboard": [
+            [{"text": f"Да, разослать {n} пользователям", "callback_data": "adm_bc_go", "style": "danger"}],
+            [{"text": "Назад", "callback_data": "adm_bc_back"}]]})
+    if data == "adm_bc_back":
+        return call("editMessageReplyMarkup", chat_id=chat, message_id=mid, reply_markup=draft_controls(admin))
+    if data == "adm_bc_go":
+        drafts.pop(admin, None)
+        call("editMessageText", chat_id=chat, message_id=mid, text="Рассылка началась…")
+        threading.Thread(target=broadcast_copy, args=(admin, list(state["subs"]), d["chat"], d["msg"], bc_markup(d["play"]), "Рассылка", mid), daemon=True).start()
+
+
 # ---------- поддержка ----------
 def ask_support(chat, uid):
     waiting_support[uid] = time.time()
@@ -402,6 +535,8 @@ def on_command(m, cmd):
         threading.Thread(target=send_invite, args=(chat, uid, m["from"]), daemon=True).start()
     elif cmd == "support":
         ask_support(chat, uid)
+    elif cmd == "admin" and uid in ADMINS:
+        admin_menu(chat)
     elif cmd == "help":
         send(chat, HELP, reply_markup=play_button("Играть"))
     elif cmd == "stop":
@@ -419,6 +554,11 @@ def on_command(m, cmd):
 
 def on_callback(q):
     data, chat, uid = q.get("data"), q["message"]["chat"]["id"], q["from"]["id"]
+    if data and data.startswith("adm_"):
+        call("answerCallbackQuery", callback_query_id=q["id"])
+        if uid in ADMINS:
+            on_admin_callback(q, data)
+        return
     call("answerCallbackQuery", callback_query_id=q["id"], **({"text": "Рисуем профиль…"} if data == "profile" else {"text": "Готовим приглашение…"} if data == "invite" else {}))
     if data == "help":
         send(chat, HELP, reply_markup=play_button("Играть"))
@@ -485,6 +625,11 @@ def main():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
         call("setMyCommands", commands=COMMANDS)
+        for a in ADMINS:          # админам в меню команд ещё и /admin
+            try:
+                call("setMyCommands", commands=COMMANDS + [{"command": "admin", "description": "Админка"}], scope={"type": "chat", "chat_id": a})
+            except Exception:
+                pass
     except Exception as err:
         print("Команды не установлены:", err, flush=True)
     threading.Thread(target=remind_loop, daemon=True).start()
@@ -520,6 +665,8 @@ def main():
                     send(m["chat"]["id"], f"{e('money')} Оплата прошла: <b>+{p['total_amount']} ⭐</b> на балансе.", reply_markup=play_button("Играть"))
                 elif uid in ADMINS and m.get("reply_to_message") and from_support(m):
                     pass
+                elif uid in ADMINS and admin_wait.get(uid) == "bc" and not text.startswith("/"):
+                    on_admin_draft(m)
                 elif text.startswith("/start"):
                     on_start(m)
                 elif text.startswith("/"):

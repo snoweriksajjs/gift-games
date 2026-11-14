@@ -5,7 +5,7 @@
   const A = window.App, { $, STAR, fmt, fmtS, pct, xf } = A;
   // Шанс раунда подобран так, чтобы средний возврат был равен HOUSE:
   // (1 - P) * 2P / (1 - 2P) = HOUSE.
-  const H = A.HOUSE, P = ((2 + 2 * H) - Math.sqrt((2 + 2 * H) * (2 + 2 * H) - 8 * H)) / 4;
+  const H = A.rtp("streak"), P = ((2 + 2 * H) - Math.sqrt((2 + 2 * H) * (2 + 2 * H) - 8 * H)) / 4;
   const MAX_WINS = 10;
   let dial, running = false, wins = 0, bet = 0;
 

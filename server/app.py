@@ -15,6 +15,7 @@
 Только стандартная библиотека Python 3.9+.
 """
 import base64, hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.parse, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("TG_TOKEN") or sys.exit("Нужна переменная окружения TG_TOKEN")
@@ -25,7 +26,7 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "20")
+VER = os.environ.get("APP_VER", "21")
 BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
@@ -79,7 +80,7 @@ def add_column(table, col, decl):
 
 
 # новые поля поверх первой версии базы
-for t, c, d in [("users", "balance", "INTEGER"), ("users", "staked", "INTEGER"), ("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
+for t, c, d in [("users", "created", "INTEGER"), ("users", "balance", "INTEGER"), ("users", "staked", "INTEGER"), ("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
                 ("chats", "photo", "TEXT"), ("chats", "look", "TEXT"), ("chats", "handle", "TEXT"),
                 ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"),
                 ("members", "title", "TEXT"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
@@ -154,6 +155,8 @@ def touch_user(u):
           ON CONFLICT(id) DO UPDATE SET name=excluded.name, username=excluded.username, photo=excluded.photo, seen=excluded.seen""",
                    (uid, name, tgname, (u.get("photo_url") or "")[:300], int(time.time())))
         # новичку юзернейм из Telegram, если он свободен
+        if fresh:
+            db.execute("UPDATE users SET created=? WHERE id=?", (int(time.time()), uid))
         if fresh and tgname and handle_free(tgname, uid):
             db.execute("UPDATE users SET handle=? WHERE id=?", (tgname, uid))
     return uid
@@ -367,6 +370,9 @@ def save_jpeg(data_url, max_bytes=700_000):
 def api(method, path, uid, body, query):
     p = path.strip("/").split("/")[1:]          # без "api"
     now = int(time.time())
+    r = admin.handle(method, p, uid, body, query, now)   # настройки, промокоды, задания, выдачи, админка
+    if r is not None:
+        return r
 
     if p == ["me"] and method == "POST":
         sets = []
@@ -382,7 +388,8 @@ def api(method, path, uid, body, query):
         for k, v in sets:
             run(f"UPDATE users SET {k}=? WHERE id=?", v, uid)
         pending = q1("SELECT COUNT(*) n FROM transfers WHERE to_user=? AND claimed IS NULL", uid)["n"]
-        return {"me": user_card(uid, True), "pending": pending}
+        grants = q1("SELECT COUNT(*) n FROM grants WHERE user=? AND claimed IS NULL", uid)["n"]
+        return {"me": user_card(uid, True), "pending": pending, "grants": grants, "admin": uid in admin.ADMINS}
 
     if p == ["handle"] and method == "GET":
         h = clean(query.get("h", [""])[0], 24).lstrip("@")
@@ -718,6 +725,10 @@ def api(method, path, uid, body, query):
         return {"gift": q1("SELECT gift FROM transfers WHERE id=?", tid)["gift"]}
 
     raise HttpError(404, "not found")
+
+
+import admin                     # server/admin.py лежит рядом
+admin.bind(globals())
 
 
 class Handler(BaseHTTPRequestHandler):

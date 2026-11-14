@@ -9,7 +9,7 @@
   const chance = () => {
     const v = A.stakeValue();
     if (!target || v <= 0) return 0;
-    return Math.min(MAX_CHANCE, (v / A.byId[target].price) * A.HOUSE);
+    return Math.min(MAX_CHANCE, (v / A.byId[target].price) * A.rtp("classic"));
   };
 
   function renderShop() {

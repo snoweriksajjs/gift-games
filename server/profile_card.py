@@ -459,6 +459,127 @@ def render_ref(d):
     return out, thumb
 
 
+def render_launch():
+    """Баннер для запуска канала: логотип в центре, вокруг по эллипсу вращаются самые дорогие подарки,
+    сзади вращаются лучи света, внизу заголовок и плашки с главным."""
+    out = os.path.join(CACHE, "launch_v2.mp4")
+    thumb = out[:-4] + ".jpg"
+    if os.path.exists(out) and os.path.getsize(out) > 0:
+        return out, thumb
+    cat = list(_catalog().values())
+    best = {}
+    for g in cat:
+        if g["gift"] not in best or g["price"] > best[g["gift"]]["price"]:
+            best[g["gift"]] = g
+    gifts = sorted(best.values(), key=lambda g: -g["price"])[:8]
+    imgs = []
+    for g in gifts:
+        try:
+            imgs.append((g, _fetch(g["img"]).resize((150, 150), Image.LANCZOS)))
+        except Exception:
+            pass
+    CX, CY = 600, 262
+    base = _radial((W, H), (CX, CY), (92, 68, 10), (7, 7, 9), 760)
+
+    # лучи света: 14 клиньев, за цикл поворачиваются ровно на один клин
+    rays = Image.new("RGBA", (1600, 1600))
+    rd = ImageDraw.Draw(rays)
+    for i in range(14):
+        a0 = i * 360 / 14
+        rd.pieslice((0, 0, 1599, 1599), a0, a0 + 9, fill=(255, 214, 90, 26))
+    rays = rays.filter(ImageFilter.GaussianBlur(6))
+    fade = Image.new("L", (1600, 1600), 0)
+    fd = ImageDraw.Draw(fade)
+    for r in range(800, 0, -8):
+        fd.ellipse((800 - r, 800 - r, 800 + r, 800 + r), fill=int(255 * (1 - r / 800) ** 1.4))
+    rays.putalpha(Image.composite(rays.getchannel("A"), Image.new("L", rays.size, 0), fade))
+
+    mark = _fetch(SITE + "img/logo-mark.png")
+    mark = mark.resize((int(mark.width * 150 / mark.height), 150), Image.LANCZOS)
+    word = _fetch(SITE + "img/logo-word.png")
+    word = word.resize((int(word.width * 62 / word.height), 62), Image.LANCZOS)
+    glow = Image.new("RGBA", (W, H))
+    ImageDraw.Draw(glow).ellipse((CX - 230, CY - 150, CX + 230, CY + 150), fill=(253, 211, 17, 60))
+    glow = glow.filter(ImageFilter.GaussianBlur(60))
+
+    txt = Image.new("RGBA", (W, H))
+    td = ImageDraw.Draw(txt)
+    hf = _font("ExtraBold", 46)
+    line1, line2 = "Выбивай ", "NFT-подарки Telegram"
+    w1, w2 = td.textlength(line1, font=hf), td.textlength(line2, font=hf)
+    x0 = CX - (w1 + w2) / 2
+    td.text((x0, 478), line1, font=hf, fill=(255, 255, 255), anchor="lm")
+    td.text((x0 + w1, 478), line2, font=hf, fill=(253, 211, 17), anchor="lm")
+    pills = ["Бесплатное яйцо каждый день", "6 режимов игры", "Честные раунды"]
+    pf = _font("SemiBold", 25)
+    widths = [td.textlength(p, font=pf) + 76 for p in pills]
+    px = CX - (sum(widths) + 14 * (len(pills) - 1)) / 2
+    star = _tgstar(28)
+    for ptxt, pw in zip(pills, widths):
+        txt.alpha_composite(_rounded((int(pw), 54), 27, (255, 255, 255, 30)), (int(px), 528))
+        txt.alpha_composite(star, (int(px + 16), 541))
+        td.text((px + 54, 555), ptxt, font=pf, fill=(255, 255, 255), anchor="lm")
+        px += pw + 14
+    twinkles = [(140, 90, 30, 0), (1060, 80, 26, .25), (90, 400, 22, .5), (1120, 420, 24, .75), (330, 60, 18, .4), (870, 450, 18, .1), (200, 620, 20, .6), (1000, 630, 20, .9)]
+
+    band = Image.new("RGBA", (160, 260))
+    bd = ImageDraw.Draw(band)
+    for x in range(160):
+        bd.line([(x, 0), (x, 260)], fill=(255, 255, 255, int(150 * math.exp(-((x - 80) / 30) ** 2))))
+    band = band.rotate(-18, expand=True, resample=Image.BICUBIC)
+    logo = Image.new("RGBA", (max(mark.width, word.width) + 40, 150 + 70 + 20))
+    logo.alpha_composite(mark, ((logo.width - mark.width) // 2, 0))
+    logo.alpha_composite(word, ((logo.width - word.width) // 2, 168))
+
+    tmp = tempfile.mkdtemp(dir=CACHE)
+    n = FPS * 4
+    for fi in range(n):
+        t = fi / n
+        fr = base.copy()
+        rr = rays.rotate(-t * 360 / 14, resample=Image.BICUBIC)
+        fr.alpha_composite(rr, (CX - 800, CY - 800))
+        fr.alpha_composite(glow)
+        items = []
+        for k, (g, gi) in enumerate(imgs):
+            a = k / len(imgs) * 2 * math.pi + t * 2 * math.pi / len(imgs)
+            x, y = CX + math.cos(a) * 470, CY + 4 + math.sin(a) * 118
+            depth = (math.sin(a) + 1) / 2            # 0 сзади, 1 спереди
+            items.append((depth, x, y, gi))
+        items.sort(key=lambda it: it[0])
+        def draw_item(depth, x, y, gi):
+            sz = int(92 + 58 * depth)
+            im = gi.resize((sz, sz), Image.LANCZOS)
+            if depth < .5:
+                im = _with_alpha(im, .45 + depth)
+            fr.alpha_composite(im, (int(x - sz / 2), int(y - sz / 2)))
+        for it in items:          # все подарки позади логотипа, ближние крупнее и ярче
+            draw_item(*it)
+        bob = int(5 * math.sin(t * 2 * math.pi))
+        lg = logo.copy()
+        bx = int(-260 + (lg.width + 420) * min(1, t / .45))
+        sh = Image.new("RGBA", lg.size)
+        sh.alpha_composite(band, (bx, -40))
+        sh.putalpha(Image.composite(sh.getchannel("A"), Image.new("L", lg.size, 0), lg.getchannel("A")))
+        lg.alpha_composite(sh)
+        fr.alpha_composite(lg, (CX - lg.width // 2, CY - 128 + bob))
+        for x, y, sz, ph in twinkles:
+            k = .5 + .5 * math.sin((t + ph) * 2 * math.pi)
+            s2 = max(4, int(sz * (.55 + .45 * k)))
+            fr.alpha_composite(_with_alpha(star.resize((s2, s2), Image.LANCZOS), .35 + .65 * k), (x - s2 // 2, y - s2 // 2))
+        fr.alpha_composite(txt)
+        frame = fr.convert("RGB")
+        frame.save(os.path.join(tmp, f"f{fi:03d}.png"), compress_level=1)
+        if fi == 0:
+            frame.save(thumb, quality=90)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(FPS), "-i", os.path.join(tmp, "f%03d.png"),
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-preset", "veryfast", "-movflags", "+faststart", "-an", out + ".part.mp4"], check=True)
+    os.replace(out + ".part.mp4", out)
+    for f2 in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f2))
+    os.rmdir(tmp)
+    return out, thumb
+
+
 if __name__ == "__main__":      # проверка: python3 profile_card.py data.json
     import sys, time
     t0 = time.time()

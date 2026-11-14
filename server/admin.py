@@ -1,0 +1,365 @@
+"""Админка DuckChance на сервере: настройки игры, промокоды, задания, выдачи игрокам, статистика и рассылка.
+
+Подключается из app.py: admin.bind(globals()), затем admin.handle(...) в начале обработки каждого запроса.
+Баланс и подарки живут на устройстве игрока, поэтому изменения доходят до него «выдачами»:
+сервер ставит выдачу в очередь, приложение забирает её при следующей синхронизации (каждую ровно один раз).
+"""
+import json, os, random, re, string, sys, threading, time
+
+G = {}           # общие функции и константы из app.py
+ADMINS = set(int(x) for x in os.environ.get("ADMIN_IDS", "8083284748").split(",") if x.strip().isdigit())
+
+DEFAULTS = {
+    "rtp": 0.95,                 # доля ставок, которая в среднем возвращается игрокам
+    "modes": {},                 # своя доля для режима: {"crash": 0.93}
+    "deposits": True,            # пополнение звёздами
+    "free_egg": True,            # бесплатное яйцо раз в день
+    "ref_bonus": 100,            # звёзд за приглашённого друга
+    "maintenance": False,        # технические работы: приложение закрыто для всех, кроме админов
+    "maint_text": "Идут технические работы. Скоро вернёмся.",
+    "withdraw_note": "Вывод подарков скоро",
+}
+MODES = ["classic", "streak", "contract", "arena", "crash", "egg"]
+
+
+def bind(g):
+    G.update(g)
+    db = g["db"]
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS promos (code TEXT PRIMARY KEY COLLATE NOCASE, kind TEXT, amount INTEGER, gift TEXT,
+      uses_max INTEGER, uses INTEGER DEFAULT 0, wager REAL DEFAULT 0, expires INTEGER, created INTEGER, active INTEGER DEFAULT 1, note TEXT);
+    CREATE TABLE IF NOT EXISTS promo_uses (code TEXT COLLATE NOCASE, user INTEGER, at INTEGER, PRIMARY KEY (code, user));
+    CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, kind TEXT, target TEXT, reward INTEGER,
+      active INTEGER DEFAULT 1, created INTEGER);
+    CREATE TABLE IF NOT EXISTS task_done (task INTEGER, user INTEGER, at INTEGER, PRIMARY KEY (task, user));
+    CREATE TABLE IF NOT EXISTS grants (id INTEGER PRIMARY KEY AUTOINCREMENT, user INTEGER, kind TEXT, amount INTEGER, gift TEXT,
+      wager REAL DEFAULT 0, note TEXT, created INTEGER, claimed INTEGER);
+    CREATE INDEX IF NOT EXISTS grants_user ON grants (user, claimed);
+    CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, admin INTEGER, action TEXT, data TEXT, at INTEGER);
+    """)
+    g["add_column"]("users", "banned", "INTEGER")
+
+
+q = lambda *a: G["q"](*a)
+q1 = lambda *a: G["q1"](*a)
+run = lambda *a: G["run"](*a)
+
+
+def err(code, text):
+    return G["HttpError"](code, text)
+
+
+def settings():
+    s = dict(DEFAULTS)
+    for r in q("SELECT key, value FROM settings"):
+        try:
+            s[r["key"]] = json.loads(r["value"])
+        except ValueError:
+            pass
+    return s
+
+
+def log(admin, action, data):
+    run("INSERT INTO admin_log (admin, action, data, at) VALUES (?, ?, ?, ?)", admin, action, json.dumps(data, ensure_ascii=False)[:2000], int(time.time()))
+
+
+def public_config(uid):
+    s = settings()
+    tasks = q("SELECT id, title, kind, target, reward FROM tasks WHERE active=1 ORDER BY id")
+    done = {r["task"] for r in q("SELECT task FROM task_done WHERE user=?", uid)}
+    for t in tasks:
+        t["done"] = t["id"] in done
+    return {"rtp": s["rtp"], "modes": s["modes"], "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
+            "maintenance": s["maintenance"] and uid not in ADMINS, "maint_text": s["maint_text"], "withdraw_note": s["withdraw_note"],
+            "tasks": tasks, "admin": uid in ADMINS}
+
+
+def gift_ok(g):
+    return isinstance(g, str) and bool(G["GIFT_ID"].match(g))
+
+
+def num(v, lo, hi, default=0):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+# ---------- статистика ----------
+def stats():
+    now = int(time.time())
+    one = lambda sql, *a: (q1(sql, *a) or {}).get("n") or 0
+    pay_n = pay_sum = pay_day = 0
+    try:
+        with open(os.environ.get("PAY_LOG", "payments.log")) as f:
+            for line in f:
+                p = json.loads(line)
+                pay_n += 1
+                pay_sum += p.get("stars", 0)
+                if now - p.get("time", 0) < 86400:
+                    pay_day += p.get("stars", 0)
+    except Exception:
+        pass
+    bp = sys.modules.get("bot_poller")
+    return {
+        "users": one("SELECT COUNT(*) n FROM users"),
+        "new_day": one("SELECT COUNT(*) n FROM users WHERE created>?", now - 86400),
+        "new_week": one("SELECT COUNT(*) n FROM users WHERE created>?", now - 7 * 86400), "active_day": one("SELECT COUNT(*) n FROM users WHERE seen>?", now - 86400),
+        "active_week": one("SELECT COUNT(*) n FROM users WHERE seen>?", now - 7 * 86400),
+        "online": one("SELECT COUNT(*) n FROM users WHERE seen>?", now - 300),
+        "bot_users": len(bp.state["subs"]) if bp else 0,
+        "payments": pay_n, "paid_stars": pay_sum, "paid_day": pay_day,
+        "balances": one("SELECT COALESCE(SUM(balance),0) n FROM users"),
+        "banned": one("SELECT COUNT(*) n FROM users WHERE banned=1"),
+        "chats": one("SELECT COUNT(*) n FROM chats WHERE kind='group'"), "channels": one("SELECT COUNT(*) n FROM chats WHERE kind='channel'"),
+        "dms": one("SELECT COUNT(*) n FROM chats WHERE kind='dm'"), "messages": one("SELECT COUNT(*) n FROM messages"),
+        "transfers": one("SELECT COUNT(*) n FROM transfers"), "promo_uses": one("SELECT COUNT(*) n FROM promo_uses"),
+        "tasks_done": one("SELECT COUNT(*) n FROM task_done"),
+        "top": [G["user_card"](r["id"]) | {"balance": r["balance"] or 0} for r in q("SELECT id, balance FROM users ORDER BY balance DESC LIMIT 5")],
+    }
+
+
+def user_full(uid):
+    u = q1("SELECT * FROM users WHERE id=?", uid)
+    if not u:
+        raise err(404, "no user")
+    card = G["user_card"](uid, True)
+    card.update({"balance": u.get("balance") or 0, "staked": u.get("staked") or 0, "banned": bool(u.get("banned")),
+                 "tg_username": u.get("username") or "",
+                 "chats": (q1("SELECT COUNT(*) n FROM members WHERE user=?", uid) or {}).get("n", 0),
+                 "messages": (q1("SELECT COUNT(*) n FROM messages WHERE user=?", uid) or {}).get("n", 0),
+                 "grants": q("SELECT * FROM grants WHERE user=? ORDER BY id DESC LIMIT 20", uid),
+                 "promos": q("SELECT code, at FROM promo_uses WHERE user=? ORDER BY at DESC LIMIT 20", uid)})
+    return card
+
+
+# ---------- рассылка ----------
+def broadcast(admin, text, photo, button, test):
+    bp = sys.modules.get("bot_poller")
+    if not bp:
+        raise err(503, "bot is off")
+    markup = None
+    if button == "play":
+        markup = {"inline_keyboard": [[bp.app_btn("Играть", icon="fire", style="primary")]]}
+    elif isinstance(button, dict) and button.get("text") and re.match(r"^https://", str(button.get("url", ""))):
+        markup = {"inline_keyboard": [[{"text": str(button["text"])[:40], "url": str(button["url"])[:300]}]]}
+    targets = [admin] if test else list(bp.state["subs"])
+    threading.Thread(target=bp.broadcast_html, args=(admin, targets, text, photo, markup, test), daemon=True).start()
+    return {"ok": True, "targets": len(targets)}
+
+
+def gen_code():
+    return "DUCK-" + "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+
+# ---------- обработчик ----------
+def handle(method, p, uid, body, query, now):
+    """Возвращает ответ, если путь наш, иначе None."""
+    u = q1("SELECT banned FROM users WHERE id=?", uid)
+    if u and u.get("banned") and p not in (["me"], ["config"]):
+        raise err(403, "banned")
+
+    if p == ["config"] and method == "GET":
+        cfg = public_config(uid)
+        cfg["banned"] = bool(u and u.get("banned"))
+        return cfg
+
+    # ---- промокод любого формата ----
+    if p == ["promo"] and method == "POST":
+        G["limit"](uid, "promo", 10, 600)
+        code = G["clean"](body.get("code"), 40).strip().upper()     # регистр не важен, и для кириллицы тоже
+        pr = q1("SELECT * FROM promos WHERE code=? COLLATE NOCASE", code)
+        if not pr or not pr["active"]:
+            raise err(404, "no promo")
+        if pr["expires"] and now > pr["expires"]:
+            raise err(410, "expired")
+        if pr["uses_max"] and pr["uses"] >= pr["uses_max"]:
+            raise err(410, "used up")
+        with G["lock"]:
+            try:
+                G["db"].execute("INSERT INTO promo_uses (code, user, at) VALUES (?, ?, ?)", (pr["code"], uid, now))
+            except Exception:
+                raise err(409, "already used")
+            G["db"].execute("UPDATE promos SET uses=uses+1 WHERE code=?", (pr["code"],))
+        return {"kind": pr["kind"], "amount": pr["amount"] or 0, "gift": pr["gift"], "wager": pr["wager"] or 0}
+
+    # ---- задания: подписка проверяется через бота ----
+    if p == ["task", "check"] and method == "POST":
+        G["limit"](uid, "task", 20, 60)
+        t = q1("SELECT * FROM tasks WHERE id=? AND active=1", int(body.get("id") or 0))
+        if not t:
+            raise err(404, "no task")
+        if q1("SELECT 1 x FROM task_done WHERE task=? AND user=?", t["id"], uid):
+            raise err(409, "done")
+        if t["kind"] == "sub":
+            chat = t["target"] if t["target"].startswith("@") or t["target"].lstrip("-").isdigit() else "@" + t["target"]
+            try:
+                r = G["tg_call"]("getChatMember", chat_id=chat, user_id=uid)
+                status = r["result"]["status"]
+            except Exception as e:
+                print("Проверка подписки не удалась:", e, flush=True)
+                raise err(424, "cannot check")
+            if status not in ("member", "administrator", "creator", "restricted"):
+                raise err(412, "not subscribed")
+        run("INSERT OR IGNORE INTO task_done (task, user, at) VALUES (?, ?, ?)", t["id"], uid, now)
+        return {"reward": t["reward"]}
+
+    # ---- выдачи от админа ----
+    if p == ["grants"] and method == "GET":
+        return {"grants": q("SELECT id, kind, amount, gift, wager, note FROM grants WHERE user=? AND claimed IS NULL ORDER BY id", uid)}
+    if len(p) == 3 and p[:2] == ["grants", "claim"] and method == "POST":
+        gid = int(p[2])
+        with G["lock"]:
+            ok = G["db"].execute("UPDATE grants SET claimed=? WHERE id=? AND user=? AND claimed IS NULL", (now, gid, uid)).rowcount == 1
+        if not ok:
+            raise err(409, "claimed")
+        return q1("SELECT id, kind, amount, gift, wager, note FROM grants WHERE id=?", gid)
+
+    if not p or p[0] != "admin":
+        return None
+    if uid not in ADMINS:
+        raise err(403, "admins only")
+    a = p[1:]
+
+    if a == ["stats"]:
+        return stats()
+
+    if a == ["users"] and method == "GET":
+        s = G["clean"](query.get("q", [""])[0], 40).lstrip("@").lower()
+        sort = {"seen": "seen DESC", "balance": "balance DESC", "new": "rowid DESC"}.get(query.get("sort", ["seen"])[0], "seen DESC")
+        off = int(query.get("offset", ["0"])[0] or 0)
+        if s:
+            like = f"%{s}%"
+            rows = q(f"SELECT id FROM users WHERE ulower(name) LIKE ? OR ulower(handle) LIKE ? OR ulower(username) LIKE ? OR CAST(id AS TEXT)=? ORDER BY {sort} LIMIT 50 OFFSET ?", like, like, like, s, off)
+        else:
+            rows = q(f"SELECT id FROM users ORDER BY {sort} LIMIT 50 OFFSET ?", off)
+        out = []
+        for r in rows:
+            uu = q1("SELECT balance, banned, username FROM users WHERE id=?", r["id"])
+            out.append(G["user_card"](r["id"]) | {"balance": uu["balance"] or 0, "banned": bool(uu["banned"]), "tg_username": uu["username"] or ""})
+        return {"users": out, "total": (q1("SELECT COUNT(*) n FROM users") or {}).get("n", 0)}
+
+    if len(a) >= 2 and a[0] == "user":
+        tid = int(a[1])
+        if len(a) == 2 and method == "GET":
+            return user_full(tid)
+        if a[2:] == ["grant"] and method == "POST":
+            kind = body.get("kind")
+            if kind not in ("add", "set", "gift"):
+                raise err(400, "bad kind")
+            amount = int(num(body.get("amount"), -10**9, 10**9))
+            gift = body.get("gift") if kind == "gift" else None
+            if kind == "gift" and not gift_ok(gift):
+                raise err(400, "bad gift")
+            run("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                tid, kind, amount, gift, num(body.get("wager"), 0, 50), G["clean"](body.get("note"), 120), now)
+            log(uid, "grant", {"user": tid, "kind": kind, "amount": amount, "gift": gift})
+            return {"ok": True}
+        if a[2:] == ["ban"] and method == "POST":
+            run("UPDATE users SET banned=? WHERE id=?", 1 if body.get("on") else None, tid)
+            log(uid, "ban", {"user": tid, "on": bool(body.get("on"))})
+            return {"ok": True}
+        if a[2:] == ["message"] and method == "POST":
+            text = G["clean"](body.get("text"), 3500)
+            if not text:
+                raise err(400, "empty")
+            bp = sys.modules.get("bot_poller")
+            try:
+                (bp.send if bp else None)(tid, text)
+            except Exception as e:
+                raise err(502, f"not delivered: {e}")
+            return {"ok": True}
+
+    if a == ["settings"] and method == "GET":
+        return settings()
+    if a == ["settings"] and method == "POST":
+        s = settings()
+        if "rtp" in body:
+            s["rtp"] = round(num(body["rtp"], 0.5, 0.99, 0.95), 3)
+        if isinstance(body.get("modes"), dict):
+            s["modes"] = {m: round(num(v, 0.5, 0.99, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v}
+        for k in ("deposits", "free_egg", "maintenance"):
+            if k in body:
+                s[k] = bool(body[k])
+        if "ref_bonus" in body:
+            s["ref_bonus"] = int(num(body["ref_bonus"], 0, 100000, 100))
+        for k in ("maint_text", "withdraw_note"):
+            if k in body:
+                s[k] = G["clean"](body[k], 200)
+        for k, v in s.items():
+            run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", k, json.dumps(v, ensure_ascii=False))
+        log(uid, "settings", body)
+        return s
+
+    if a == ["promos"] and method == "GET":
+        return {"promos": q("SELECT * FROM promos ORDER BY created DESC LIMIT 200")}
+    if a == ["promos"] and method == "POST":
+        code = (G["clean"](body.get("code"), 40).strip() or gen_code()).upper()
+        if not re.match(r"^[\w\-\.!@#$%&*+=?а-яА-ЯёЁ]{2,40}$", code):
+            raise err(400, "bad code")
+        kind = body.get("kind")
+        if kind not in ("stars", "gift"):
+            raise err(400, "bad kind")
+        gift = body.get("gift") if kind == "gift" else None
+        if kind == "gift" and not gift_ok(gift):
+            raise err(400, "bad gift")
+        days = num(body.get("days"), 0, 3650)
+        try:
+            run("INSERT INTO promos (code, kind, amount, gift, uses_max, wager, expires, created, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                code, kind, int(num(body.get("amount"), 0, 10**8)), gift, int(num(body.get("uses_max"), 0, 10**7)),
+                num(body.get("wager"), 0, 50), int(now + days * 86400) if days else None, now, G["clean"](body.get("note"), 120))
+        except Exception:
+            raise err(409, "exists")
+        log(uid, "promo", {"code": code})
+        return q1("SELECT * FROM promos WHERE code=?", code)
+    if len(a) == 3 and a[0] == "promos" and method == "POST":
+        code = a[1]
+        if a[2] == "toggle":
+            run("UPDATE promos SET active=1-active WHERE code=? COLLATE NOCASE", code)
+        elif a[2] == "delete":
+            run("DELETE FROM promos WHERE code=? COLLATE NOCASE", code)
+        return {"ok": True}
+
+    if a == ["tasks"] and method == "GET":
+        rows = q("SELECT * FROM tasks ORDER BY id DESC")
+        for t in rows:
+            t["done"] = (q1("SELECT COUNT(*) n FROM task_done WHERE task=?", t["id"]) or {}).get("n", 0)
+        return {"tasks": rows}
+    if a == ["tasks"] and method == "POST":
+        kind = body.get("kind")
+        if kind not in ("sub", "link"):
+            raise err(400, "bad kind")
+        target = G["clean"](body.get("target"), 200)
+        title = G["clean"](body.get("title"), 80)
+        if not target or not title:
+            raise err(400, "empty")
+        if kind == "link" and not target.startswith("https://"):
+            raise err(400, "bad link")
+        if kind == "sub":
+            target = re.sub(r"^(https://)?t\.me/", "@", target)
+        tid = run("INSERT INTO tasks (title, kind, target, reward, created) VALUES (?, ?, ?, ?, ?)", title, kind, target, int(num(body.get("reward"), 0, 10**6)), now)
+        log(uid, "task", {"id": tid, "title": title})
+        return q1("SELECT * FROM tasks WHERE id=?", tid)
+    if len(a) == 3 and a[0] == "tasks" and method == "POST":
+        tid = int(a[1])
+        if a[2] == "toggle":
+            run("UPDATE tasks SET active=1-active WHERE id=?", tid)
+        elif a[2] == "delete":
+            run("DELETE FROM tasks WHERE id=?", tid)
+            run("DELETE FROM task_done WHERE task=?", tid)
+        return {"ok": True}
+
+    if a == ["broadcast"] and method == "POST":
+        text = str(body.get("text") or "")[:4000]
+        photo = G["clean_photo"](body.get("photo")) if body.get("photo") else ""
+        if not text.strip() and not photo:
+            raise err(400, "empty")
+        log(uid, "broadcast", {"test": bool(body.get("test")), "len": len(text)})
+        return broadcast(uid, text, photo, body.get("button"), bool(body.get("test")))
+
+    if a == ["log"]:
+        return {"log": q("SELECT * FROM admin_log ORDER BY id DESC LIMIT 100")}
+
+    raise err(404, "not found")
