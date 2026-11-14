@@ -6,6 +6,8 @@
   const BOT_USERNAME = "IitvIn_bot";   // имя бота без @, нужно для реферальной ссылки
   const REF_BONUS = 100;               // звёзд за друга, который сделал первую игру
   const SITE = "https://snoweriksajjs.github.io/gift-games";   // публичный адрес, нужен для карточек в сторис
+  const ADMIN_ID = 8083284748;         // кому показывается админ-панель
+  const CODE_KEY = "duckchance-codes-v1";   // ключ подписи промокодов. Он виден в коде сайта: с сервером подпись переедет туда
   const HOUSE = 0.95;                  // доля, которая возвращается игрокам
 
   const CATALOG = window.GIFTS || [];
@@ -540,7 +542,7 @@
   // выигрыш в сторис: картинка подарка лежит на сайте, ссылка ведёт в приложение
   $("#resShare").addEventListener("click", () => {
     const g = prize && prize.gift; if (!g) return;
-    const link = `https://t.me/${BOT_USERNAME}` + (user ? `?startapp=ref_${user.id}` : "");
+    const link = `https://t.me/${BOT_USERNAME}` + (user ? `?start=ref_${user.id}` : "");
     const text = `Выиграл ${g.gift} #${g.num} за ${fmt(g.price)} звёзд`;
     hap.soft();
     if (inTg && tg.shareToStory) {
@@ -777,23 +779,54 @@
   });
 
   // ---------- друзья ----------
+  // Ссылка ведёт в чат с ботом. Бот видит, кто кого пригласил, и присылает пригласившему кнопку с бонусом.
   function initFriends() {
-    const link = BOT_USERNAME && user ? `https://t.me/${BOT_USERNAME}?startapp=ref_${user.id}` : "";
-    const sp = inTg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
-    if (sp && sp.indexOf("ref_") === 0 && !state.referrer) { state.referrer = sp.slice(4); save(); }
-    $("#refTerms").textContent = `${REF_BONUS} звёзд за друга, который сыграет первый раз`;
+    const link = BOT_USERNAME && user ? `https://t.me/${BOT_USERNAME}?start=ref_${user.id}` : "";
+    $("#refTerms").textContent = `${REF_BONUS} звёзд за каждого друга, который запустит бота по вашей ссылке`;
     $("#refLink").textContent = link || "Ссылка появится после входа через Telegram";
     $("#refCopy").disabled = $("#refShare").disabled = !link;
-    $("#refCount").textContent = state.refs || 0;
-    $("#refEarned").textContent = fmt((state.refs || 0) * REF_BONUS);
     $("#refCopy").addEventListener("click", () => {
       navigator.clipboard && navigator.clipboard.writeText(link).then(() => toast("Ссылка скопирована"), () => toast("Не получилось скопировать"));
     });
     $("#refShare").addEventListener("click", () => {
-      const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("Апгрейд подарков за звёзды. Заходи")}`;
+      const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("DuckChance: игры на подарки за звёзды. Заходи")}`;
       if (inTg) try { return tg.openTelegramLink(url); } catch {}
       window.open(url, "_blank");
     });
+    renderFriends();
+  }
+  function renderFriends() {
+    $("#refCount").textContent = state.refs || 0;
+    $("#refEarned").textContent = fmt(state.refEarned || 0);
+  }
+
+  // ---------- коды: промокоды и бонусы за друзей ----------
+  // Код: ВИД-СУММА-НОМЕР-ПОДПИСЬ. Вид P это промокод, R это бонус за друга.
+  // Подпись считается от ключа CODE_KEY. Код срабатывает один раз на устройстве.
+  const signCode = (kind, amount, nonce) => hex(hmac(CODE_KEY, enc(`${kind}:${amount}:${nonce}`))).slice(0, 10);
+  const makeCode = (kind, amount, nonce) => `${kind}-${amount}-${nonce}-${signCode(kind, amount, nonce)}`;
+  function redeemCode(raw, quiet) {
+    const m = /^([PR])-(\d{1,7})-([A-Za-z0-9]{1,24})-([0-9a-f]{10})$/.exec(String(raw || "").trim());
+    const fail = (t) => { if (!quiet) { toast(t); hap.lose(); } return false; };
+    if (!m) return fail("Такого кода нет");
+    const [, kind, amountS, nonce, sig] = m, amount = Number(amountS);
+    if (signCode(kind, amount, nonce) !== sig || !amount) return fail("Такого кода нет");
+    state.codes = state.codes || [];
+    if (state.codes.includes(m[0])) return fail("Этот код уже использован");
+    state.codes.push(m[0]);
+    state.balance += amount;
+    if (kind === "R") { state.refs = (state.refs || 0) + 1; state.refEarned = (state.refEarned || 0) + amount; }
+    save(); hap.coin(); renderBalance(true); renderStake(); renderFriends(); renderTasks();
+    toast(kind === "R" ? `+${fmt(amount)} звёзд за друга` : `Промокод: +${fmt(amount)} звёзд`);
+    return true;
+  }
+  // бот открывает приложение со ссылкой вида ?code=... или ?ref=...
+  function readLaunch() {
+    const q = new URLSearchParams(location.search);
+    const ref = q.get("ref");
+    if (ref && !state.referrer && !(user && String(user.id) === ref)) { state.referrer = ref; save(); }
+    const code = q.get("code");
+    if (code) setTimeout(() => redeemCode(code, (state.codes || []).includes(code)), 1400);
   }
 
   // ---------- профиль ----------
@@ -820,14 +853,98 @@
     if (tab !== "pageProfile") return;
     const gifts = [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price);
     const total = gifts.reduce((a, it) => a + byId[it.id].price, 0);
-    // шапка профиля окрашивается в фон самого дорогого подарка
-    const top = gifts.length ? byId[gifts[0].id] : null, banner = $("#pfBanner");
-    banner.style.cssText = top ? bg(top) : "";
-    banner.classList.toggle("has", !!top);
+    paintBanner();
     $("#profCount").innerHTML = gifts.length ? `${gifts.length} · ${STAR} ${fmtS(total)}` : "";
     $("#profGrid").innerHTML = gifts.length
       ? gifts.map((it) => tile(byId[it.id], "", `data-uid="${it.uid}"`)).join("")
       : `<div class="empty">Здесь будут выигранные подарки</div>`;
+  }
+
+  // ---------- баннер профиля: свой цвет и узор ----------
+  const BANNER_COLORS = [], BANNER_SYMS = [];
+  (function () {
+    const seenC = new Set(), seenS = new Set();
+    for (const g of CATALOG) {
+      if (!seenC.has(g.backdrop) && BANNER_COLORS.length < 28) { seenC.add(g.backdrop); BANNER_COLORS.push({ name: g.backdrop, c1: g.c1, c2: g.c2, cp: g.cp }); }
+      if (!seenS.has(g.sym) && BANNER_SYMS.length < 31) { seenS.add(g.sym); BANNER_SYMS.push({ name: g.symbol, sym: g.sym }); }
+    }
+  })();
+  function bannerLook() {
+    if (state.banner) return state.banner;
+    const top = [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price)[0];
+    const g = top && byId[top.id];
+    return g ? { c1: g.c1, c2: g.c2, cp: g.cp, sym: g.sym } : { c1: "#5ea8ff", c2: "#2f6fe0", cp: "#1f55b8", sym: null };
+  }
+  function paintBanner() {
+    const b = bannerLook(), el = $("#pfBanner");
+    el.style.cssText = `--c1:${b.c1};--c2:${b.c2};--cp:${b.cp}` + (b.sym ? `;--sym:url('${b.sym}')` : "");
+    el.classList.toggle("has", !!b.sym);
+  }
+  function renderBannerSheet() {
+    const b = bannerLook();
+    $("#bnColors").innerHTML = BANNER_COLORS.map((c, i) => `<button class="bn-color ${c.c1 === b.c1 && c.c2 === b.c2 ? "on" : ""}" data-c="${i}" title="${c.name}" aria-label="${c.name}" style="background:radial-gradient(circle at 50% 35%, ${c.c1}, ${c.c2})"></button>`).join("");
+    $("#bnSyms").innerHTML = `<button class="bn-sym none ${!b.sym ? "on" : ""}" data-s="-1" aria-label="Без узора">Нет</button>` +
+      BANNER_SYMS.map((x, i) => `<button class="bn-sym ${x.sym === b.sym ? "on" : ""}" data-s="${i}" title="${x.name}" aria-label="${x.name}"><i style="--sym:url('${x.sym}')"></i></button>`).join("");
+  }
+  function initBanner() {
+    $("#bannerEdit").addEventListener("click", () => { renderBannerSheet(); openSheet($("#bannerSheet")); });
+    $("#bnColors").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-c]"); if (!b) return;
+      const c = BANNER_COLORS[Number(b.dataset.c)];
+      state.banner = { ...bannerLook(), c1: c.c1, c2: c.c2, cp: c.cp }; save(); hap.soft(); paintBanner(); renderBannerSheet();
+    });
+    $("#bnSyms").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-s]"); if (!b) return;
+      const i = Number(b.dataset.s);
+      state.banner = { ...bannerLook(), sym: i < 0 ? null : BANNER_SYMS[i].sym }; save(); hap.soft(); paintBanner(); renderBannerSheet();
+    });
+    $("#bnReset").addEventListener("click", () => { state.banner = null; save(); hap.soft(); paintBanner(); renderBannerSheet(); });
+  }
+
+  // ---------- промокод ----------
+  function initPromo() {
+    $("#promoBtn").addEventListener("click", () => { $("#promoInput").value = ""; openSheet($("#promoSheet")); });
+    $("#promoGo").addEventListener("click", () => { if (redeemCode($("#promoInput").value)) closeSheet(); });
+  }
+
+  // ---------- админ-панель ----------
+  // Видна только админу. Сервера нет, поэтому панель меняет данные на этом устройстве,
+  // а другим игрокам звёзды выдаются промокодом.
+  const isAdmin = !!(user && user.id === ADMIN_ID) || ["127.0.0.1", "localhost"].includes(location.hostname);
+  function initAdmin() {
+    const row = $("#adminBtn");
+    row.hidden = !isAdmin;
+    if (!isAdmin) return;
+    const num = (id) => Math.floor(Number($(id).value) || 0);
+    const info = () => {
+      const dep = (state.deposits || []).reduce((a, d) => a + d.n, 0);
+      $("#admInfo").innerHTML = `Баланс ${STAR} ${fmt(state.balance)} · подарков ${state.inv.length} · игр ${state.stats.spins} · пополнено ${STAR} ${fmt(dep)}`;
+    };
+    row.addEventListener("click", () => { info(); $("#admGift").innerHTML = byPrice.map((g) => `<option value="${g.id}">${g.gift} · ${g.model} · ${fmtS(g.price)}</option>`).join(""); openSheet($("#adminSheet")); });
+    $("#admGive").addEventListener("click", () => {
+      const n = num("#admStars"); if (!n) return toast("Введите сумму");
+      state.balance = Math.max(0, state.balance + n); save(); hap.coin(); renderBalance(true); renderStake(); info();
+      toast(`${n > 0 ? "+" : ""}${fmt(n)} звёзд`);
+    });
+    $("#admGrant").addEventListener("click", () => {
+      const g = byId[$("#admGift").value]; if (!g) return;
+      grant(g); hap.coin(); renderStake(); renderProfile(); renderTasks(); info();
+      toast(`Выдан ${g.gift} #${g.num}`);
+    });
+    $("#admCode").addEventListener("click", () => {
+      const n = num("#admCodeSum"); if (n < 1) return toast("Введите сумму");
+      const code = makeCode("P", n, Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36));
+      $("#admCodeOut").textContent = code; $("#admCodeOut").hidden = false; hap.soft();
+      navigator.clipboard && navigator.clipboard.writeText(code).then(() => toast("Промокод скопирован"), () => {});
+    });
+    $("#admReset").addEventListener("click", () => {
+      if (!confirm("Сбросить баланс, подарки и историю на этом устройстве?")) return;
+      const keep = { fair: state.fair, sound: state.sound, haptics: state.haptics, banner: state.banner, codes: state.codes };
+      state = Object.assign(freshState(), keep);
+      state.stats = { spins: 0, wins: 0, best: 0, wagered: 0, lowWins: 0, bestStreak: 0, bestCrash: 0, arenaWins: 0, contracts: 0 };
+      state.claimed = {}; stake.uids.clear(); stake.stars = 0;
+      save(); location.reload();
+    });
   }
 
   // ---------- клавиатура ----------
@@ -840,7 +957,7 @@
 
   // ---------- запуск ----------
   function start() {
-    initDucks(); initProfile(); initFriends();
+    initDucks(); initProfile(); initFriends(); initBanner(); initPromo(); initAdmin(); readLaunch();
     all("[data-balance]").forEach((n) => (n.textContent = fmt(state.balance)));
     Object.values(modes).forEach((m) => m.init && m.init());
     renderFeed(); renderTasks();
@@ -855,7 +972,7 @@
   const App = window.App = {
     HOUSE, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
     $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
-    hap, snd, duckData, setDuck, playDuck, syncDucks, initDucks,
+    hap, snd, duckData, makeCode, redeemCode, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,
     Fair, sha256, hex, enc, nextRound, Dial, confetti, PARTY, toast,
     openSheet, closeSheet, get sheet() { return sheetEl; },

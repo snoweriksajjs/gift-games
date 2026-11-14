@@ -623,3 +623,23 @@ img.a-ball-in { display: block; width: 100%; height: 100%; }
 .pf-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -.3px; }
 .pf-head span { color: var(--hint); font-size: 14px; display: flex; align-items: center; gap: 3px; }
 .sheet-text.credits { font-size: 12px; margin-top: 4px; }
+
+/* оформление профиля, промокод, админ-панель */
+.pf-edit { position: absolute; top: 10px; right: 10px; height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(0, 0, 0, .28); color: #fff; font-size: 13px; font-weight: 500; z-index: 1; }
+.pf-edit:active { opacity: .6; }
+.bn-colors { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.bn-color { aspect-ratio: 1; border-radius: 50%; border: 0; }
+.bn-color.on { box-shadow: 0 0 0 2.5px var(--bg), 0 0 0 5px var(--btn); }
+.bn-syms { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.bn-sym { aspect-ratio: 1; border-radius: 10px; background: var(--card); display: grid; place-items: center; font-size: 11px; color: var(--hint); }
+.bn-sym i { width: 62%; aspect-ratio: 1; background: var(--text); -webkit-mask: var(--sym) center / contain no-repeat; mask: var(--sym) center / contain no-repeat; }
+.bn-sym.on { box-shadow: inset 0 0 0 2.5px var(--btn); }
+.adm-row { display: flex; gap: 8px; align-items: center; }
+.adm-row input, .adm-row select { flex: 1; min-width: 0; height: 44px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--card); color: var(--text); font-size: 16px; outline: none; }
+.adm-row .mini-btn { height: 44px; border-radius: 10px; }
+.adm-code { display: block; padding: 12px; border-radius: 10px; background: var(--card); color: var(--text); font-size: 14px; user-select: all; -webkit-user-select: all; }
+.adm-code[hidden], .row[hidden] { display: none; }
+
+.sheet-body > * { min-width: 0; }
+.adm-row > * { min-width: 0; }
+.adm-row .mini-btn { flex: none; }

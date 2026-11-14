@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <title>Апгрейд подарков</title>
+  <title>DuckChance</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css?v=10" />
+  <link rel="stylesheet" href="style.css?v=11" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -35,7 +35,7 @@
           <div class="ava" data-ava>Г</div>
           <div class="me-text">
             <div class="me-name" data-name>Гость</div>
-            <div class="me-sub">Игры на подарки</div>
+            <div class="me-sub">DuckChance</div>
           </div>
         </div>
         <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
@@ -218,6 +218,7 @@
     <main class="page" id="pageProfile" hidden>
       <section class="pf-banner" id="pfBanner">
         <i class="pat"></i>
+        <button class="pf-edit" id="bannerEdit">Оформить</button>
         <div class="ava xl" data-ava>Г</div>
         <h1 data-name>Гость</h1>
         <p id="meHandle"></p>
@@ -237,6 +238,8 @@
       <section class="list">
         <label class="row"><span class="duck " data-duck="music"></span><span class="grow">Звук</span><input type="checkbox" class="sw" id="soundSw" /></label>
         <label class="row"><span class="duck " data-duck="phone"></span><span class="grow">Вибрация</span><input type="checkbox" class="sw" id="hapSw" /></label>
+        <button class="row link" id="promoBtn"><span class="duck " data-duck="gift"></span><span class="grow">Промокод</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+        <button class="row link" id="adminBtn" hidden><span class="duck " data-duck="lock"></span><span class="grow">Админ-панель</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
         <button class="row link" id="fairBtn"><span class="duck " data-duck="shield"></span><span class="grow">Честная игра</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
       </section>
     </main>
@@ -328,8 +331,42 @@
     <div class="grab"></div>
     <header class="sheet-head"><h3>Вывод</h3><button class="sheet-x" data-close>Закрыть</button></header>
     <div class="sheet-body">
-      <div class="dep-hero"><span class="duck xl" data-duck="bag" data-loop></span><p>Вывод подарков и звёзд в Telegram скоро заработает</p></div>
-      <button class="cta inline" disabled>Скоро</button>
+      <div class="dep-hero"><span class="duck xl" data-duck="bag" data-loop></span><p>Вывести можно только подарки. Звёзды не выводятся: их можно тратить в играх.</p></div>
+      <button class="cta inline" disabled>Вывод подарков скоро</button>
+    </div>
+  </section>
+
+  <section class="sheet" id="bannerSheet" role="dialog" aria-modal="true" aria-label="Оформление профиля" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Оформление</h3><button class="sheet-x" data-close>Готово</button></header>
+    <div class="sheet-body">
+      <h4 class="sec-title">Цвет</h4>
+      <div class="bn-colors" id="bnColors"></div>
+      <h4 class="sec-title">Узор</h4>
+      <div class="bn-syms" id="bnSyms"></div>
+      <button class="danger-btn" id="bnReset">Вернуть как было</button>
+    </div>
+  </section>
+
+  <section class="sheet" id="promoSheet" role="dialog" aria-modal="true" aria-label="Промокод" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Промокод</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-body">
+      <label class="field">Код<input type="text" id="promoInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="P-100-..." /></label>
+      <button class="cta inline" id="promoGo">Активировать</button>
+    </div>
+  </section>
+
+  <section class="sheet" id="adminSheet" role="dialog" aria-modal="true" aria-label="Админ-панель" hidden>
+    <div class="grab"></div>
+    <header class="sheet-head"><h3>Админ-панель</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <div class="sheet-body">
+      <p class="sheet-text" id="admInfo"></p>
+      <label class="field">Звёзды себе (можно с минусом)<span class="adm-row"><input type="number" id="admStars" value="1000" inputmode="numeric" /><button class="mini-btn" id="admGive">Выдать</button></span></label>
+      <label class="field">Подарок себе<span class="adm-row"><select id="admGift"></select><button class="mini-btn" id="admGrant">Выдать</button></span></label>
+      <label class="field">Промокод для игрока, звёзд<span class="adm-row"><input type="number" id="admCodeSum" value="500" min="1" inputmode="numeric" /><button class="mini-btn" id="admCode">Создать</button></span></label>
+      <code class="adm-code" id="admCodeOut" hidden></code>
+      <button class="danger-btn" id="admReset">Сбросить мой прогресс</button>
     </div>
   </section>
 
@@ -358,14 +395,14 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=10"></script>
-  <script src="js/core.js?v=10"></script>
-  <script src="js/modes/classic.js?v=10"></script>
-  <script src="js/modes/streak.js?v=10"></script>
-  <script src="js/modes/contract.js?v=10"></script>
-  <script src="js/modes/arena.js?v=10"></script>
-  <script src="js/modes/crash.js?v=10"></script>
-  <script src="js/modes/egg.js?v=10"></script>
+  <script src="gifts.js?v=11"></script>
+  <script src="js/core.js?v=11"></script>
+  <script src="js/modes/classic.js?v=11"></script>
+  <script src="js/modes/streak.js?v=11"></script>
+  <script src="js/modes/contract.js?v=11"></script>
+  <script src="js/modes/arena.js?v=11"></script>
+  <script src="js/modes/crash.js?v=11"></script>
+  <script src="js/modes/egg.js?v=11"></script>
   <script>App.start();</script>
 </body>
 </html>
