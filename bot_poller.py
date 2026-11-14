@@ -15,7 +15,7 @@ API = f"https://api.telegram.org/bot{TOKEN}/"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 CODE_KEY = os.environ.get("CODE_KEY", "duckchance-codes-v1")   # тот же ключ, что в js/core.js
 REF_BONUS = int(os.environ.get("REF_BONUS", "100"))
-VER = os.environ.get("APP_VER", "11")
+VER = os.environ.get("APP_VER", "13")
 LOG = os.environ.get("PAY_LOG", "payments.log")
 SEEN = os.environ.get("SEEN_FILE", "seen_users.json")
 
@@ -49,6 +49,11 @@ def on_start(m, seen):
     seen.add(uid)
     json.dump(sorted(seen), open(SEEN, "w"))
     ref = arg[4:] if arg.startswith("ref_") and arg[4:].isdigit() else ""
+    chat = arg[5:] if arg.startswith("chat_") and arg[5:].isdigit() else ""
+    if chat:   # приглашение в группу или канал внутри приложения
+        call("sendMessage", chat_id=m["chat"]["id"], text="Вас пригласили в чат DuckChance.",
+             reply_markup=play_button("Открыть чат", chat=chat))
+        return
     call("sendMessage", chat_id=m["chat"]["id"], text="DuckChance: игры на подарки за звёзды. Жмите «Играть».",
          reply_markup=play_button("Играть", **({"ref": ref} if ref else {})))
     # бонус пригласившему: только за нового человека и не за самого себя

@@ -250,7 +250,11 @@
     return { gift, uid, stars, value };
   }
   function grant(gift) { const uid = state.uidSeq++; state.inv.push({ uid, id: gift.id }); save(); return uid; }
+  // подарок в стейкинге нельзя продать, поставить или передать
+  const locked = (uid) => { const it = state.inv.find((x) => x.uid === uid); return !!(it && it.stake); };
+  const invTile = (it, cls = "") => tile(byId[it.id], cls + (it.stake ? " locked" : ""), `data-uid="${it.uid}"`);
   function sellUids(uids) {
+    uids = uids.filter((u) => !locked(u));
     let sum = 0;
     state.inv = state.inv.filter((it) => { if (!uids.includes(it.uid)) return true; sum += byId[it.id].price; return false; });
     uids.forEach((u) => stake.uids.delete(u));
@@ -409,13 +413,13 @@
     sheet.classList.remove("on"); scrim.classList.remove("on");
     if (!instant) snd("close", 0.3);
     document.body.style.overflow = "";
-    if (inTg) try { tg.BackButton.hide(); } catch {}
+    if (inTg && !App.keepBack) try { tg.BackButton.hide(); } catch {}
     const hide = () => { if (sheetEl !== sheet) sheet.hidden = true; if (!sheetEl) scrim.hidden = true; syncDucks(); };
     instant ? hide() : setTimeout(hide, 320);
   }
   scrim.addEventListener("click", () => closeSheet());
   all("[data-close]").forEach((b) => b.addEventListener("click", () => closeSheet()));
-  if (inTg) try { tg.BackButton.onClick(() => closeSheet()); } catch {}
+  if (inTg) try { tg.BackButton.onClick(() => (sheetEl ? closeSheet() : App.onBack && App.onBack())); } catch {}
 
   // ---------- баланс ----------
   let shownBalance = state.balance;
@@ -466,7 +470,7 @@
     if (!stakeSheet.hidden) {
       invGrid.innerHTML = state.inv.length
         ? [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price)
-          .map((it) => tile(byId[it.id], stake.uids.has(it.uid) ? "sel" : "", `data-uid="${it.uid}"`)).join("")
+          .map((it) => invTile(it, stake.uids.has(it.uid) ? "sel" : "")).join("")
         : `<div class="empty">Подарков пока нет. Начните со звёзд.</div>`;
     }
     if (App.mode && App.mode.onStake) App.mode.onStake();
@@ -475,6 +479,7 @@
   invGrid.addEventListener("click", (e) => {
     const c = e.target.closest("[data-uid]"); if (App.busy || !c || App.pressed) return;
     const uid = Number(c.dataset.uid);
+    if (locked(uid)) return toast("Подарок в стейкинге");
     if (stake.uids.has(uid)) stake.uids.delete(uid);
     else { if (stake.uids.size >= maxItems()) return toast(`В ставке не больше ${maxItems()} подарков`); stake.uids.add(uid); }
     hap.select(); renderStake();
@@ -648,7 +653,8 @@
     $("#gcTable").innerHTML = row("Модель", s.model, s.rare) + row("Фон", s.backdrop, s.brare) + row("Символ", s.symbol, s.srare) +
       `<div class="row"><span>Цена</span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>`;
     const sell = $("#gcSell");
-    sell.hidden = uid == null;
+    sell.hidden = uid == null || locked(uid);
+    if (App.giftActions) App.giftActions(s, uid);
     sell.innerHTML = `Продать за ${STAR}${fmtS(s.price)}`;
     sell.onclick = () => {
       const sum = sellUids([uid]); closeSheet();
@@ -705,6 +711,7 @@
     ctaBar.hidden = id !== "pageUp";
     if (id === "pageTasks") renderTasks();
     if (id === "pageProfile") renderProfile();
+    if (App.onTab) App.onTab(id);
     window.scrollTo(0, 0); syncDucks();
   }
   $("#tabs").addEventListener("click", (e) => {
@@ -854,9 +861,10 @@
     const gifts = [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price);
     const total = gifts.reduce((a, it) => a + byId[it.id].price, 0);
     paintBanner();
+    if (App.onProfile) App.onProfile();
     $("#profCount").innerHTML = gifts.length ? `${gifts.length} · ${STAR} ${fmtS(total)}` : "";
     $("#profGrid").innerHTML = gifts.length
-      ? gifts.map((it) => tile(byId[it.id], "", `data-uid="${it.uid}"`)).join("")
+      ? gifts.map((it) => invTile(it)).join("")
       : `<div class="empty">Здесь будут выигранные подарки</div>`;
   }
 
@@ -886,10 +894,12 @@
     const b = bannerLook(), el = $("#pfBanner"), rings = $("#pfRings");
     el.style.cssText = `--c1:${b.c1};--c2:${b.c2};--cp:${b.cp}` + (b.sym ? `;--sym:url('${b.sym}')` : "");
     el.classList.toggle("has", !!b.sym);
+    if (App.onLook) App.onLook(b);
     if (b.sym && !rings.firstChild) rings.innerHTML = ringsHtml;
     const g = b.gift && owned(b.gift) ? byId[b.gift] : null, ic = $("#pfGift");
     ic.hidden = !g;
     if (g) { ic.src = g.img; ic.alt = g.gift; }
+    $(".ava", el).classList.toggle("aring", !!(App.styleOf && App.styleOf(b)));
   }
   function renderBannerSheet() {
     const b = bannerLook();
@@ -978,6 +988,7 @@
   // ---------- запуск ----------
   function start() {
     initDucks(); initProfile(); initFriends(); initBanner(); initPromo(); initAdmin(); readLaunch();
+    if (App.initSocial) App.initSocial();
     all("[data-balance]").forEach((n) => (n.textContent = fmt(state.balance)));
     Object.values(modes).forEach((m) => m.init && m.init());
     renderFeed(); renderTasks();
@@ -998,6 +1009,7 @@
     openSheet, closeSheet, get sheet() { return sheetEl; },
     stake, stakeValue, takeStake, stakeChips, renderStake, renderBalance,
     showPrize, showMiss, log, renderFeed, renderTasks, renderProfile, openGift, setCta,
+    locked, invTile, bannerLook, tg, BOT_USERNAME, get tab() { return tab; },
     registerMode(name, m) { modes[name] = m; }, showMode, start,
     mode: null, modeName: "", busy: false, pressed: false,
   };

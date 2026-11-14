@@ -2,3 +2,5 @@
 .DS_Store
 payments.log
 seen_users.json
+duckchance.db*
+__pycache__/
