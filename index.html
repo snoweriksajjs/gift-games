@@ -6,7 +6,7 @@
   <title>DuckChance</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css?v=30" />
+  <link rel="stylesheet" href="style.css?v=31" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -21,7 +21,7 @@
 
   <div class="splash" id="splash" aria-hidden="true">
     <span class="duck splash-duck" data-duck="hi"></span>
-    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=30" alt=""><i class="logo-word"></i></div>
+    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=31" alt=""><i class="logo-word"></i></div>
     <div class="splash-bar"><i></i></div>
   </div>
 
@@ -29,7 +29,7 @@
     <!-- ===== Игры ===== -->
     <main class="page on" id="pageUp">
       <header class="bar">
-        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=30" alt=""><i class="logo-word"></i></h1>
+        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=31" alt=""><i class="logo-word"></i></h1>
         <div class="bar-right">
           <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
             <svg class="star"><use href="#star" /></svg><b data-balance>0</b><span class="plus" aria-hidden="true">+</span>
@@ -85,26 +85,35 @@
       <!-- Серия -->
       <section class="mode card upgrader" id="mode-streak" hidden>
         <div id="dialStreak"></div>
-        <div class="ladder" id="ladder"></div>
         <div class="stats">
-          <div class="stat"><span class="duck" data-duck="fire" id="streakDuck"></span><span class="stat-l">Побед подряд</span><b id="streakCount">0</b></div>
-          <div class="stat"><span class="duck " data-duck="star"></span><span class="stat-l">За победу</span><b>×2</b></div>
+          <div class="stat"><span class="duck" data-duck="fire" id="streakDuck"></span><span class="stat-l">Серия</span><b id="streakCount">0×</b></div>
+          <div class="stat"><span class="duck " data-duck="star"></span><span class="stat-l">Шанс раунда</span><b id="streakPer">0%</b></div>
           <label class="stat toggle"><span class="duck " data-duck="rocket"></span><span class="stat-l">Быстро</span><b data-fast-label>Выкл</b><input type="checkbox" data-fast aria-label="Быстрая прокрутка" /></label>
         </div>
         <div class="slots">
-          <button class="slot stake-slot">
+          <button class="slot stake-slot" id="streakStake">
             <span class="slot-label">Ставка</span>
             <span class="slot-body" data-stake-body></span>
             <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b data-stake-sum>0</b></span>
           </button>
-          <svg class="flow" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" /></svg>
-          <div class="slot">
-            <span class="slot-label">Приз</span>
+          <div class="slot" id="bankSlot" hidden>
+            <span class="slot-label">Сейчас</span>
             <span class="slot-body" id="bankBody"></span>
             <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b id="bankSum">0</b></span>
           </div>
+          <svg class="flow" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" /></svg>
+          <div class="slot">
+            <span class="slot-label">Следующий</span>
+            <span class="slot-body" id="targetBody"></span>
+            <span class="slot-sum"><svg class="star"><use href="#star" /></svg><b id="targetSum">0</b></span>
+          </div>
         </div>
-        <p class="rule">Одна ставка. Круг крутится сам до первого промаха. Каждая победа удваивает приз.</p>
+        <div class="mults" id="streakMults" role="group" aria-label="Множитель каждого раунда">
+          <button data-m="1.5">×1.5</button><button data-m="2">×2</button><button data-m="3">×3</button>
+          <button data-m="5">×5</button><button data-m="10">×10</button><button data-m="20">×20</button>
+        </div>
+        <div class="ladder" id="ladder"></div>
+        <p class="rule">Апгрейды идут подряд сами. Каждая победа умножает приз на выбранный множитель. Промах сжигает всё, поэтому забирайте вовремя.</p>
       </section>
 
       <!-- Контракт -->
@@ -485,16 +494,16 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=30"></script>
-  <script src="js/core.js?v=30"></script>
-  <script src="js/modes/classic.js?v=30"></script>
-  <script src="js/modes/streak.js?v=30"></script>
-  <script src="js/modes/contract.js?v=30"></script>
-  <script src="js/modes/arena.js?v=30"></script>
-  <script src="js/modes/crash.js?v=30"></script>
-  <script src="js/modes/egg.js?v=30"></script>
-  <script src="js/social.js?v=30"></script>
-  <script src="js/admin.js?v=30"></script>
+  <script src="gifts.js?v=31"></script>
+  <script src="js/core.js?v=31"></script>
+  <script src="js/modes/classic.js?v=31"></script>
+  <script src="js/modes/streak.js?v=31"></script>
+  <script src="js/modes/contract.js?v=31"></script>
+  <script src="js/modes/arena.js?v=31"></script>
+  <script src="js/modes/crash.js?v=31"></script>
+  <script src="js/modes/egg.js?v=31"></script>
+  <script src="js/social.js?v=31"></script>
+  <script src="js/admin.js?v=31"></script>
   <script>App.start();</script>
 </body>
 </html>
