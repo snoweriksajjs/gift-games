@@ -16,16 +16,16 @@
   // свежие настройки с сервера (App.live) важнее сохранённых с прошлого запуска
   const rtp = (mode) => { const L = App.live || CFG; return clampRtp((L.modes || {})[mode] ?? L.rtp ?? HOUSE); };
 
-  const CATALOG = window.GIFTS || [];
-  const byId = Object.fromEntries(CATALOG.map((s) => [s.id, s]));
+  // Каталог из gifts.js собирается на лету (window.Cat): около полумиллиона подарков «модель + фон».
+  // byId[номер] отдаёт подарок, как раньше обычный словарь.
+  const Cat = window.Cat;
+  const byId = new Proxy({}, { get: (_, id) => (typeof id === "string" && Cat ? Cat.get(id) : undefined), has: (_, id) => !!(Cat && Cat.get(id)) });
   // Цена подарка = минимальная цена его коллекции на рынке (Fragment) × множитель редкости модели, фона и символа.
   // Свежие минимальные цены присылает сервер, последние сохранены на устройстве; запасные лежат в gifts.js.
-  const BASE_FLOORS = window.GIFT_FLOORS || {};
-  function setPrices(floors) {
-    for (const g of CATALOG) g.price = Math.max(1, Math.round(((floors && floors[g.gift]) || BASE_FLOORS[g.gift] || g.price) * (g.mult || 1)));
-  }
+  let shownFloors = "null";
+  function setPrices(floors) { if (Cat) Cat.setFloors(floors); shownFloors = JSON.stringify(floors || null); }
   try { setPrices(JSON.parse(localStorage.getItem("dc_floors") || "null")); } catch {}
-  const byPrice = [...CATALOG].sort((a, b) => a.price - b.price);
+
 
   // ---------- Telegram ----------
   const tg = window.Telegram && window.Telegram.WebApp;
@@ -111,7 +111,8 @@
   })();
   state.stats = Object.assign({ spins: 0, wins: 0, best: 0, wagered: 0, lowWins: 0, bestStreak: 0, bestCrash: 0, arenaWins: 0, contracts: 0 }, state.stats);
   state.claimed = state.claimed || {};
-  state.inv = state.inv.filter((it) => byId[it.id]);
+  // неизвестные подарки только прячем: если каталог не загрузился, коллекция игрока не должна пропасть
+  if (Cat) state.inv = state.inv.filter((it) => byId[it.id] || !/^(g\d+|c\d+\.\d+\.\d+)$/.test(it.id));
   const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch {} };
 
   // ---------- мелочи ----------
@@ -250,7 +251,7 @@
   // самый дорогой подарок, на который хватает суммы
   function bestGift(value) {
     let best = null;
-    for (const s of byPrice) { if (s.price <= value) best = s; else break; }
+    best = Cat ? Cat.best(value) : null;
     return best;
   }
   // выдача выигрыша: подарок по сумме и остаток звёздами
@@ -957,9 +958,11 @@
   const BANNER_COLORS = [], BANNER_SYMS = [];
   (function () {
     const seenC = new Set(), seenS = new Set();
-    for (const g of CATALOG) {
-      if (!seenC.has(g.backdrop) && BANNER_COLORS.length < 28) { seenC.add(g.backdrop); BANNER_COLORS.push({ name: g.backdrop, c1: g.c1, c2: g.c2, cp: g.cp }); }
-      if (!seenS.has(g.sym) && BANNER_SYMS.length < 31) { seenS.add(g.sym); BANNER_SYMS.push({ name: g.symbol, sym: g.sym }); }
+    if (!Cat) return;
+    for (const b of Cat.bds) if (!seenC.has(b[0]) && BANNER_COLORS.length < 28) { seenC.add(b[0]); BANNER_COLORS.push({ name: b[0], c1: b[1], c2: b[2], cp: b[3] }); }
+    for (let ci = 0; ci < Cat.cols.length && BANNER_SYMS.length < 31; ci++) {
+      const g = Cat.get(`c${ci}.0.0`);
+      if (g && !seenS.has(g.sym)) { seenS.add(g.sym); BANNER_SYMS.push({ name: g.symbol, sym: g.sym }); }
     }
   })();
   const owned = (id) => state.inv.some((x) => x.id === id);
@@ -1018,12 +1021,14 @@
 
   // ---------- промокод ----------
   function initPromo() {
-    $("#promoBtn").addEventListener("click", () => { $("#promoInput").value = ""; openSheet($("#promoSheet")); });
+
+    $("#promoInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#promoGo").click(); });
     $("#promoGo").addEventListener("click", () => {
       const v = $("#promoInput").value.trim();
-      if (/^[PR]-\d+-[A-Za-z0-9]+-[0-9a-f]{10}$/.test(v) || !App.redeemPromo) { if (redeemCode(v)) closeSheet(); return; }
+      const done = () => { $("#promoInput").value = ""; $("#promoInput").blur(); };
       if (!v) return toast("Введите промокод");
-      App.redeemPromo(v).then(() => closeSheet(), (msg) => { toast(msg); hap.lose(); });
+      if (/^[PR]-\d+-[A-Za-z0-9]+-[0-9a-f]{10}$/.test(v) || !App.redeemPromo) { if (redeemCode(v)) done(); return; }
+      App.redeemPromo(v).then(done, (msg) => { toast(msg); hap.lose(); });
     });
   }
 
@@ -1040,7 +1045,7 @@
       const dep = (state.deposits || []).reduce((a, d) => a + d.n, 0);
       $("#admInfo").innerHTML = `Баланс ${STAR} ${fmt(state.balance)} · подарков ${state.inv.length} · игр ${state.stats.spins} · пополнено ${STAR} ${fmt(dep)}`;
     };
-    row.addEventListener("click", () => { if (App.openAdmin) return App.openAdmin(); info(); $("#admGift").innerHTML = byPrice.map((g) => `<option value="${g.id}">${g.gift} · ${g.model} · ${fmtS(g.price)}</option>`).join(""); openSheet($("#adminSheet")); });
+    row.addEventListener("click", () => { if (App.openAdmin) return App.openAdmin(); info(); $("#admGift").innerHTML = (Cat ? Cat.search({ dir: -1, limit: 150 }).items : []).map((g) => `<option value="${g.id}">${g.gift} · ${g.model} · ${fmtS(g.price)}</option>`).join(""); openSheet($("#adminSheet")); });
     $("#admGive").addEventListener("click", () => {
       const n = num("#admStars"); if (!n) return toast("Введите сумму");
       state.balance = Math.max(0, state.balance + n); save(); hap.coin(); renderBalance(true); renderStake(); info();
@@ -1093,14 +1098,12 @@
   const App = window.App = {
     HOUSE, rtp, CFG, rangeMult,
     applyPrices(p) {                     // новые цены с сервера: пересортировать и перерисовать
-      const before = JSON.stringify(CATALOG.map((g) => g.price));
+      if (JSON.stringify(p || null) === shownFloors) return;
       setPrices(p);
       try { localStorage.setItem("dc_floors", JSON.stringify(p || null)); } catch {}
-      if (JSON.stringify(CATALOG.map((g) => g.price)) === before) return;
-      byPrice.sort((a, b) => a.price - b.price);
       renderStake(); renderProfile(); renderTasks();
       if (App.mode && App.mode.enter && !App.busy) App.mode.enter();
-    }, CATALOG, byId, byPrice, state: () => state, save, user, inTg,
+    }, Cat, byId, state: () => state, save, user, inTg,
     $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
     hap, snd, duckData, makeCode, redeemCode, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,

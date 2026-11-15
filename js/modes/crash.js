@@ -225,13 +225,14 @@
   }
 
   // ---------- онлайн: общий раунд с сервера ----------
-  let online = false, srv = null, off = 0, pollTimer = 0, sending = false, claimedRound = null;
+  let online = false, srv = null, off = 0, pollTimer = 0, sending = false, claimedRound = null, pollGen = 0;
   const srvNow = () => Date.now() + off;
-  async function poll() {
+  // один опрос за раз: при повторном входе в режим старая цепочка опросов останавливается
+  async function poll(gen = ++pollGen) {
     clearTimeout(pollTimer);
-    if (!active || !online) return;
-    try { const s = await A.api("GET", "/api/crash"); off = s.now - Date.now(); onState(s); } catch {}
-    pollTimer = setTimeout(poll, phase === "fly" ? 400 : 900);
+    if (!active || !online || gen !== pollGen) return;
+    try { const s = await A.api("GET", "/api/crash"); if (gen !== pollGen) return; off = s.now - Date.now(); onState(s); } catch {}
+    if (gen === pollGen) pollTimer = setTimeout(() => poll(gen), phase === "fly" ? 400 : 900);
   }
   function onState(s) {
     const fresh = !srv || srv.id !== s.id;
@@ -243,6 +244,11 @@
       const box = $("#crashBox"); box.classList.remove("boom", "won", "fly");
       $("#crRocket").classList.remove("gone"); $("#crashMult").textContent = "×1,00";
       renderHist(); renderNow(true);
+      if (s.phase === "end") {                             // зашли, когда ракета уже взорвалась: без повторного взрыва
+        phase = "end"; cp = m = s.cp;
+        box.classList.add("boom"); $("#crRocket").classList.add("gone");
+        $("#crashMult").textContent = xf(cp); $("#crashNote").textContent = "Взорвалась";
+      } else if (s.phase === "fly") { phase = "fly"; box.classList.add("fly"); $("#crashNote").textContent = "Летит"; }
     }
     if (s.my) {
       if (!my) my = { bet: s.my.bet, cashed: 0 };
@@ -348,7 +354,7 @@
       raf = requestAnimationFrame(frame);
       if (rider && !A.REDUCED) rider.play();
     },
-    leave() { active = false; cancelAnimationFrame(raf); clearTimeout(pollTimer); if (rider) rider.pause(); },
+    leave() { active = false; pollGen++; cancelAnimationFrame(raf); clearTimeout(pollTimer); if (rider) rider.pause(); },
     onStake() { if (active) setCta(); },
     lockStake() { return !!(my && !my.cashed && phase !== "end"); },
     crashPoint,

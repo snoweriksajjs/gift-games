@@ -18,14 +18,11 @@
     if (A.sheet !== targetSheet) return;         // каталог рисуется, только когда открыт
     const q = shopSearch.value.trim().toLowerCase(), dir = shopSort.value === "asc" ? 1 : -1, v = A.stakeValue();
     const [lo, hi] = priceRange === "all" ? [0, Infinity] : priceRange.split("-").map((x) => (x === "" ? Infinity : Number(x)));
-    const list = A.CATALOG
-      .filter((s) => s.price >= lo && s.price < hi && (!q || (s.gift + " " + s.model + " " + s.backdrop + " " + s.symbol).toLowerCase().includes(q)))
-      .sort((a, b) => (a.price - b.price) * dir);
-    // каталог большой: рисуем частями, остальное по кнопке
-    const shown = list.slice(0, shopLimit);
-    shopGrid.innerHTML = list.length
+    // каталог огромный (каждая модель с каждым фоном): ищем по нему и рисуем частями
+    const { items: shown, total } = A.Cat.search({ q, lo, hi, dir, limit: shopLimit });
+    shopGrid.innerHTML = total
       ? shown.map((s) => A.tile(s, [target === s.id ? "sel" : "", v > 0 && s.price <= v ? "off" : ""].join(" "), `data-id="${s.id}"`)).join("")
-        + (list.length > shown.length ? `<button class="shop-more" data-more>Показать ещё · осталось ${A.fmt(list.length - shown.length)}</button>` : "")
+        + (total > shown.length ? `<button class="shop-more" data-more>Показать ещё · всего ${A.fmt(total)}</button>` : "")
       : `<div class="empty">Ничего не нашлось</div>`;
   }
 
@@ -106,8 +103,7 @@
         const b = e.target.closest("[data-m]"); if (!b || spinning) return;
         const v = A.stakeValue(); if (!v) return A.toast("Сначала выберите ставку");
         const want = v * Number(b.dataset.m);
-        let best = null;
-        for (const s of A.CATALOG) if (s.price > v && (!best || Math.abs(s.price - want) < Math.abs(best.price - want))) best = s;
+        const best = A.Cat.near(want, v);           // ближайший по цене к ставке × множитель, но дороже ставки
         if (!best) return A.toast("Нет подарка дороже ставки");
         target = best.id; gotId = null; activeMult = b.dataset.m;
         A.hap.select(); render();

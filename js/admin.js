@@ -3,7 +3,7 @@
 // Все действия проверяет сервер (server/admin.py): кнопка видна только админам, но доступ даёт только их ID.
 (() => {
   "use strict";
-  const A = window.App, { $, all, STAR, fmt, byId, byPrice, toast, hap } = A;
+  const A = window.App, { $, all, STAR, fmt, byId, toast, hap } = A;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const api = (m, p, b) => A.api(m, p, b);
   const fail = (e) => toast(e && e.status === 403 ? "Нет прав администратора" : e && e.status === 409 ? "Такой уже есть" : e && e.status === 400 ? "Проверьте поля" : "Ошибка сервера");
@@ -15,7 +15,7 @@
   // каталог большой: в выпадающем списке до 150 подарков, остальные находятся поиском по названию, модели, фону, символу
   const giftOptions = (q = "") => {
     q = q.trim().toLowerCase();
-    const list = (q ? byPrice.filter((g) => (g.gift + " " + g.model + " " + g.backdrop + " " + g.symbol).toLowerCase().includes(q)) : byPrice).slice().reverse().slice(0, 150);
+    const list = A.Cat.search({ q, dir: -1, limit: 150 }).items;
     return list.map((g) => `<option value="${g.id}">${esc(g.gift)} · ${esc(g.model)} · ${esc(g.backdrop)} · ${fmt(g.price)} ⭐</option>`).join("") || `<option value="">Ничего не нашлось</option>`;
   };
   const giftPicker = (id) => `<input class="adm-gq" data-for="${id}" placeholder="Поиск подарка: Pepe, Black, Durov…"><select id="${id}">${giftOptions()}</select>`;

@@ -26,10 +26,10 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "27")
+VER = os.environ.get("APP_VER", "28")
 BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
-GIFT_ID = re.compile(r"^g\d{1,4}$")
+GIFT_ID = re.compile(r"^(g\d{1,4}|c\d{1,3}\.\d{1,3}\.\d{1,3})$")   # старый номер или «коллекция.модель.фон»
 HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 SYM = re.compile(r"^https://cdn\.changes\.tg/[^\"'()\s]{1,200}$")
 HANDLE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{3,23}$")
@@ -705,7 +705,7 @@ def api(method, path, uid, body, query):
 
     if p == ["gift", "send"] and method == "POST":
         limit(uid, "gift", 10, 60)
-        to, gift = int(body.get("to") or 0), clean(body.get("gift"), 8)
+        to, gift = int(body.get("to") or 0), clean(body.get("gift"), 16)
         if to == uid or not GIFT_ID.match(gift) or not q1("SELECT id FROM users WHERE id=?", to):
             raise HttpError(400, "bad gift")
         c = dm_chat(uid, to)

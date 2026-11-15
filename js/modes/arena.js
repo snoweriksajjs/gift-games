@@ -222,18 +222,18 @@
   }
 
   // ---------- онлайн-комната ----------
-  let online = false, srv = null, off = 0, pollTimer = 0, sending = false, shownRound = null, active = false;
+  let online = false, srv = null, off = 0, pollTimer = 0, sending = false, shownRound = null, active = false, pollGen = 0;
   const srvNow = () => Date.now() + off;
   // одинаковые случайные числа у всех игроков: генератор от числа раунда
   function seeded(hex) {
     let a = parseInt(hex.slice(0, 8), 16) >>> 0;
     return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
-  async function poll() {
+  async function poll(gen = ++pollGen) {
     clearTimeout(pollTimer);
-    if (!active || !online) return;
-    try { const st = await A.api("GET", "/api/arena"); off = st.now - Date.now(); onState(st); } catch {}
-    pollTimer = setTimeout(poll, srv && srv.phase === "gather" ? 1000 : 1200);
+    if (!active || !online || gen !== pollGen) return;
+    try { const st = await A.api("GET", "/api/arena"); if (gen !== pollGen) return; off = st.now - Date.now(); onState(st); } catch {}
+    if (gen === pollGen) pollTimer = setTimeout(() => poll(gen), srv && srv.phase === "gather" ? 1000 : 1200);
   }
   const mine = () => srv && srv.players.some((p) => p.id === A.myId);
   function onState(st) {
@@ -330,7 +330,7 @@
       if (online) { poll(); clearInterval(this._t); this._t = setInterval(() => { if (active && !running) ctaOnline(); }, 1000); }
       if (!running) render();
     },
-    leave() { active = false; clearTimeout(pollTimer); clearInterval(this._t); },
+    leave() { active = false; pollGen++; clearTimeout(pollTimer); clearInterval(this._t); },
     onStake() {
       if (online) return ctaOnline();
       if (running) return;

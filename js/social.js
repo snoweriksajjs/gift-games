@@ -2,7 +2,7 @@
 // Стейкинг подарков и особый стиль редких коллекций тоже здесь. Сервер: server/app.py.
 (() => {
   "use strict";
-  const A = window.App, { $, all, STAR, fmt, byId, CATALOG, toast, hap, openSheet, closeSheet, tg, inTg, user } = A;
+  const A = window.App, { $, all, STAR, fmt, byId, toast, hap, openSheet, closeSheet, tg, inTg, user } = A;
   const st = () => A.state();
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -74,7 +74,7 @@
 
   // ---------- оформление: особый стиль, обложки, аватарки ----------
   const top = {};
-  for (const g of CATALOG) top[g.gift] = Math.max(top[g.gift] || 0, g.price);
+  if (A.Cat) A.Cat.cols.forEach((c, ci) => { top[c[0]] = A.Cat.topOf(ci).price; });   // самый дорогой подарок коллекции
   const SPECIAL = new Set(Object.keys(top).filter((k) => top[k] >= 5000));
   const styleOf = (look) => { const g = look && look.gift && byId[look.gift]; return g && SPECIAL.has(g.gift) ? g : null; };
   const vars = (g) => `--c1:${g.c1};--c2:${g.c2};--cp:${g.cp};--sym:url('${g.sym}')`;
@@ -86,7 +86,7 @@
     return { c1: look.c1, c2: look.c2, cp: look.cp, sym, gift: look.gift && byId[look.gift] ? look.gift : null };
   }
   const BACKDROPS = [];
-  { const seen = new Set(); for (const g of CATALOG) if (!seen.has(g.backdrop) && BACKDROPS.length < 21) { seen.add(g.backdrop); BACKDROPS.push({ c1: g.c1, c2: g.c2, cp: g.cp, sym: g.sym }); } }
+  if (A.Cat) { const seen = new Set(); for (let ci = 0; ci < A.Cat.cols.length; ci++) { const g = A.Cat.get(`c${ci}.0.${ci % A.Cat.cols[ci][3].length}`); if (g && !seen.has(g.backdrop) && BACKDROPS.length < 21) { seen.add(g.backdrop); BACKDROPS.push({ c1: g.c1, c2: g.c2, cp: g.cp, sym: g.sym }); } } }
 
   const hue = (n) => (Math.abs(Number(n)) * 47) % 360;
   const photoOk = (u) => (LOCAL ? /^https?:\/\/[^"'()\s]+$/ : /^https:\/\/[^"'()\s]+$/).test(u || "") ? u : "";
