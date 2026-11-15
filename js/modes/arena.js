@@ -1,8 +1,9 @@
 // Режим «Арена»: квадратное поле делится на территории по долям ставок.
 // Мяч бьют из центра в случайную сторону, он отскакивает от бортов по всему полю
 // и останавливается на чьей-то территории. Хозяин территории забирает банк.
-// Сервера пока нет, поэтому соперники здесь боты. Источник игроков собран в ArenaRoom,
-// чтобы потом заменить его комнатой с живыми игроками.
+// В Telegram комната общая: живые игроки ставят в один банк, победителя выбирает сервер (server/games.py),
+// путь мяча считается от числа раунда, поэтому у всех на экране он одинаковый.
+// Без сервера (локальная проверка) соперники боты из ArenaRoom.
 (() => {
   "use strict";
   const A = window.App, { $, STAR, fmt, fmtS, pct } = A;
@@ -20,6 +21,7 @@
   };
 
   const pot = () => players.reduce((a, p) => a + p.value, 0);
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   // ---------- территории: квадрат режется на прямоугольники с площадью по долям ----------
   function squarify(areas, x, y, w, h) {
@@ -62,7 +64,7 @@
     if (!players.length) {
       svg.innerHTML = `<rect x="0" y="0" width="${S}" height="${S}" class="a-empty"/>`;
       $("#arenaLabels").innerHTML = `<span class="a-lab idle" style="left:50%;top:50%"><b>Поле пустое</b><i>Ставка займёт территорию</i></span>`;
-      list.innerHTML = `<div class="row"><span class="grow hint">Сделайте ставку. Соперники подберутся сами</span></div>`;
+      list.innerHTML = `<div class="row"><span class="grow hint">${online ? "Комната пустая. Сделайте ставку, и игроки увидят вашу территорию" : "Сделайте ставку. Соперники подберутся сами"}</span></div>`;
       $("#arenaPot").innerHTML = `${STAR} 0`;
     } else {
       layout();
@@ -72,13 +74,14 @@
         const big = p.r.w > 90 && p.r.h > 56, small = p.r.w < 34 || p.r.h < 30;
         if (small) return "";
         const cx = ((p.r.x + p.r.w / 2) / S) * 100, cy = ((p.r.y + p.r.h / 2) / S) * 100;
-        return `<span class="a-lab" style="left:${cx}%;top:${cy}%"><b>${p.me ? "Вы" : big ? p.name : p.name.charAt(0)}</b><i>${pct(p.share)}</i></span>`;
+        return `<span class="a-lab" style="left:${cx}%;top:${cy}%"><b>${p.me ? "Вы" : big ? esc(p.name) : esc(p.name.charAt(0))}</b><i>${pct(p.share)}</i></span>`;
       }).join("");
       list.innerHTML = players.map((p, i) => `<div class="row ${winner === i ? "a-won" : ""}">
-        <i class="a-dot" style="background:${p.color}"></i><span class="grow">${p.me ? "Вы" : p.name}${p.bot ? ` <em class="tag">бот</em>` : ""}</span>
+        <i class="a-dot" style="background:${p.color}"></i><span class="grow">${p.me ? "Вы" : esc(p.name)}${p.bot ? ` <em class="tag">бот</em>` : ""}</span>
         <span class="hint">${pct(p.share)}</span><b>${STAR} ${fmtS(p.value)}</b></div>`).join("");
       $("#arenaPot").innerHTML = `${STAR} ${fmtS(pot())}`;
     }
+    if (online) return ctaOnline();
     if (!running) A.setCta({ html: v ? `Выйти на арену за ${STAR}${fmt(v)}` : "Выберите ставку", disabled: !v, fn: act });
   }
 
@@ -103,10 +106,10 @@
     }
     return pts;
   }
-  function findPath(w) {
+  function findPath(w, rnd = Math.random) {
     const r = w.r, m = Math.min(BR * 0.8, r.w * 0.25, r.h * 0.25);
     for (let tries = 0; tries < 30000; tries++) {
-      const th = Math.random() * Math.PI * 2, len = S * (2.6 + Math.random() * 2.6);
+      const th = rnd() * Math.PI * 2, len = S * (2.6 + rnd() * 2.6);
       const pts = trace(S / 2, S / 2, th, len), [ex, ey] = pts[pts.length - 1];
       if (pts.length >= 5 && ex > r.x + m && ex < r.x + r.w - m && ey > r.y + m && ey < r.y + r.h - m) return pts;
     }
@@ -123,11 +126,11 @@
   }
 
   // ---------- полёт ----------
-  function fly(pts) {
+  function fly(pts, fixedDur) {
     const segs = [], ball = $("#arenaBall"), skin = $(".a-ball-in", ball), trail = $("#arenaTrail");
     let total = 0;
     for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); segs.push(l); total += l; }
-    const dur = A.REDUCED ? 700 : A.state().fast ? 4000 : 7500 + Math.random() * 1500;
+    const dur = fixedDur || (A.REDUCED ? 700 : A.state().fast ? 4000 : 7500 + Math.random() * 1500);
     const k = ball.parentNode.clientWidth / S, size = BR * 2 * k;
     ball.style.width = ball.style.height = size + "px";
     const tail = [];                                  // короткий след за мячом, а не путь наперёд
@@ -218,10 +221,118 @@
     A.renderStake();
   }
 
+  // ---------- онлайн-комната ----------
+  let online = false, srv = null, off = 0, pollTimer = 0, sending = false, shownRound = null, active = false;
+  const srvNow = () => Date.now() + off;
+  // одинаковые случайные числа у всех игроков: генератор от числа раунда
+  function seeded(hex) {
+    let a = parseInt(hex.slice(0, 8), 16) >>> 0;
+    return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  async function poll() {
+    clearTimeout(pollTimer);
+    if (!active || !online) return;
+    try { const st = await A.api("GET", "/api/arena"); off = st.now - Date.now(); onState(st); } catch {}
+    pollTimer = setTimeout(poll, srv && srv.phase === "gather" ? 1000 : 1200);
+  }
+  const mine = () => srv && srv.players.some((p) => p.id === A.myId);
+  function onState(st) {
+    const fresh = !srv || srv.id !== st.id;
+    srv = st;
+    if (running) return;                                   // идёт показ розыгрыша
+    if (st.phase === "play" && shownRound !== st.id) { shownRound = st.id; return playOnline(st); }
+    if (fresh || st.phase !== "play") {
+      if (fresh) { lastWinner = null; $("#arenaTrail").innerHTML = ""; $("#arenaBall").hidden = true; $("#arenaHit").classList.remove("on"); }
+      players = st.players.map((p) => ({ name: p.name, me: p.id === A.myId, value: p.value, id: p.id }));
+      A.busy = mine();
+      render();
+    }
+  }
+  function ctaOnline() {
+    if (running) return;
+    const v = A.stakeValue();
+    if (!srv) return A.setCta({ html: "Подключаемся…", disabled: true });
+    const left = srv.ends_at ? Math.max(0, Math.ceil((srv.ends_at - srvNow()) / 1000)) : 0;
+    if (srv.phase === "play") return A.setCta({ html: mine() ? "Следующий раунд скоро" : "Идёт розыгрыш, ждите следующий", disabled: true });
+    if (mine()) {
+      const solo = srv.players.length < 2;
+      return A.setCta({ html: solo ? `Ждём соперника · ${left} с` : `Старт через ${left} с`, disabled: true }, solo ? { html: "Выйти", fn: leaveOnline } : null);
+    }
+    if (srv.phase === "play") return A.setCta({ html: "Идёт розыгрыш, ждите следующий", disabled: true });
+    A.setCta({ html: v ? `Войти в комнату за ${STAR}${fmt(v)}` : "Выберите ставку", disabled: !v, fn: joinOnline });
+  }
+  async function joinOnline() {
+    const v = A.stakeValue();
+    if (!v || sending || mine()) return;
+    sending = true;
+    const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
+    try {
+      const st = await A.api("POST", "/api/arena/join", { bet: v, gifts });
+      A.takeStake(); A.hap.hit();
+      onState(st);
+    } catch (e) { A.toast(e.status === 409 ? "Комната занята розыгрышем, попробуйте через пару секунд" : "Нет связи с сервером"); }
+    finally { sending = false; }
+  }
+  async function leaveOnline() {
+    if (sending) return;
+    sending = true;
+    try { const r = await A.api("POST", "/api/arena/leave", {}); A.busy = false; A.claimGrant(r.grant); A.toast("Ставка вернётся на баланс"); poll(); }
+    catch (e) { A.toast("Выйти уже нельзя: розыгрыш начался"); }
+    finally { sending = false; }
+  }
+  // розыгрыш: отсчёт, удар и полёт по времени сервера, у всех игроков одинаково
+  async function playOnline(st) {
+    running = true; A.busy = true;
+    const field = $("#arenaField"), center = $("#arenaCenter"), ball = $("#arenaBall");
+    players = st.players.map((p) => ({ name: p.name, me: p.id === A.myId, value: p.value, id: p.id }));
+    lastWinner = null; render();
+    const t0 = st.play_at, late = srvNow() - t0, wi = st.winner, w = players[wi];
+    if (late < 2200) {
+      center.hidden = false;
+      for (let n = 3; n >= 1; n--) {
+        const at = t0 + (3 - n) * 650;
+        if (srvNow() < at + 650) { center.textContent = n; A.hap.hit(); await A.wait(Math.max(0, at + 650 - srvNow())); }
+      }
+      center.hidden = true;
+    }
+    const pts = findPath(w, seeded(st.seed)), k = field.clientWidth / S;
+    const flyStart = t0 + 2500, remain = flyStart + st.fly_ms - srvNow();
+    if (remain > 900) {
+      ball.hidden = false;
+      ball.style.transform = `translate(${(S / 2) * k - BR * k}px, ${(S / 2) * k - BR * k}px) scale(.2)`;
+      A.setCta({ html: "Мяч в игре", disabled: true });
+      await A.wait(Math.max(0, flyStart - 520 - srvNow()));
+      ball.classList.add("drop"); await A.wait(Math.max(60, flyStart - srvNow())); ball.classList.remove("drop");
+      A.hap.hit();
+      var [ex, ey] = await fly(pts, Math.max(800, flyStart + st.fly_ms - srvNow()));
+    } else { var [ex, ey] = pts[pts.length - 1]; }
+    const hit = $("#arenaHit");
+    hit.style.left = (ex / S) * 100 + "%"; hit.style.top = (ey / S) * 100 + "%";
+    hit.classList.remove("on"); void hit.offsetWidth; hit.classList.add("on");
+    lastWinner = wi; running = false; A.busy = false;
+    render(); setHot(-1);
+    const me = players.find((p) => p.me);
+    if (me) {
+      A.log({ mode: "arena", win: !!w.me, bet: me.value, id: null, mult: w.me ? st.payout / me.value : 0,
+        text: `Арена онлайн, игроков ${players.length}, банк ${fmt(st.total)}, победил ${w.me ? "вы" : w.name}. Число раунда ${st.seed}` });
+      await A.wait(A.REDUCED ? 50 : 650);
+      if (w.me) { A.state().stats.arenaWins++; A.claimGrant(st.my_grant); }
+      else A.showMiss(`Победил ${w.name}`, `−${fmt(me.value)} ${STAR}`);
+    }
+    A.renderStake();
+  }
+
   A.registerMode("arena", {
     init() {},
-    enter() { if (!running) render(); },
+    enter() {
+      active = true;
+      online = !!(A.apiReady && A.apiReady());
+      if (online) { poll(); clearInterval(this._t); this._t = setInterval(() => { if (active && !running) ctaOnline(); }, 1000); }
+      if (!running) render();
+    },
+    leave() { active = false; clearTimeout(pollTimer); clearInterval(this._t); },
     onStake() {
+      if (online) return ctaOnline();
       if (running) return;
       if (A.stakeValue() && players.length) { players = []; lastWinner = null; $("#arenaTrail").innerHTML = ""; $("#arenaBall").hidden = true; $("#arenaHit").classList.remove("on"); }
       render();

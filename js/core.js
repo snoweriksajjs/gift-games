@@ -592,6 +592,11 @@
   // ---------- история: кружки как сторис ----------
   const MODE_DUCK = { classic: "chart", streak: "fire", contract: "wizard", arena: "ball", crash: "rocket", egg: "hatch" };
   function log(entry) {
+    // выигрыш в одиночном режиме попадает в общую ленту (краш и арену сервер добавляет сам)
+    if (entry.win && App.reportWin && ["classic", "streak", "contract", "egg"].includes(entry.mode)) {
+      const g = entry.id && byId[entry.id];
+      App.reportWin(entry.mode, g ? g.price : Math.round((entry.bet || 0) * (entry.mult || 0)), entry.id || null, entry.mult);
+    }
     state.history.unshift(entry);
     state.history = state.history.slice(0, 50);
     save(); renderFeed(true); renderTasks();
@@ -896,6 +901,13 @@
   // wager: во сколько раз нужно прокрутить сумму награды, прежде чем выводить подарки
   function applyReward(r, from) {
     let value = 0, text = "";
+    if (r.kind === "win") {               // выигрыш в онлайн-игре: подарок по сумме и сдача звёздами
+      const res = payout(r.amount);
+      state.stats.wins++; state.stats.best = Math.max(state.stats.best, res.value); save();
+      hap.coin(); renderBalance(true); renderStake(); renderProfile(); renderTasks();
+      showPrize({ gift: res.gift, uid: res.uid, stars: res.stars, sub: r.note || "" });
+      return res;
+    }
     if (r.kind === "stars" || r.kind === "add") { state.balance = Math.max(0, state.balance + r.amount); value = Math.abs(r.amount); text = `${r.amount >= 0 ? "+" : ""}${fmt(r.amount)} звёзд`; }
     else if (r.kind === "set") { value = Math.max(0, r.amount - state.balance); state.balance = Math.max(0, r.amount); text = `Баланс: ${fmt(r.amount)} звёзд`; }
     else if ((r.kind === "gift") && byId[r.gift]) { grant(byId[r.gift]); value = byId[r.gift].price; text = `${byId[r.gift].gift} (${byId[r.gift].model})`; }

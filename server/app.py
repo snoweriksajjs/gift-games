@@ -26,7 +26,7 @@ PUBLIC = os.environ.get("PUBLIC", "https://duck.2-27-12-205.sslip.io").rstrip("/
 ORIGINS = set(os.environ.get("ORIGIN", "https://snoweriksajjs.github.io").split(","))
 DEV = os.environ.get("DEV") == "1"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
-VER = os.environ.get("APP_VER", "26")
+VER = os.environ.get("APP_VER", "27")
 BOT_NAME = os.environ.get("BOT_NAME", "DuckChanceApp")
 AUTH_TTL = 7 * 86400          # сколько живёт подпись initData
 GIFT_ID = re.compile(r"^g\d{1,4}$")
@@ -371,6 +371,8 @@ def api(method, path, uid, body, query):
     p = path.strip("/").split("/")[1:]          # без "api"
     now = int(time.time())
     r = admin.handle(method, p, uid, body, query, now)   # настройки, промокоды, задания, выдачи, админка
+    if r is None:
+        r = games.handle(method, p, uid, body, query, now)   # онлайн-краш, арена, лента выигрышей
     if r is not None:
         return r
 
@@ -729,6 +731,8 @@ def api(method, path, uid, body, query):
 
 import admin                     # server/admin.py лежит рядом
 admin.bind(globals())
+import games                     # онлайн-игры: server/games.py
+games.bind(globals())
 
 
 class Handler(BaseHTTPRequestHandler):

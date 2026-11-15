@@ -29,7 +29,8 @@
     if (!r.ok) throw Object.assign(new Error(j.error || "error"), { status: r.status });
     return j;
   }
-  A.api = (m, p, b) => call(m, p, b);       // для админки
+  A.api = (m, p, b) => call(m, p, b);       // для админки и онлайн-игр
+  A.myId = myId;
   A.apiReady = () => canUse;
   const fail = (e) => toast(e && e.status === 429 ? "Слишком часто, подождите немного" : e && e.status === 409 ? "Это имя уже занято"
     : e && e.status === 403 ? "Недостаточно прав" : "Нет связи с сервером");
@@ -1299,6 +1300,38 @@
     }
   };
 
+  // ---------- онлайн: выигрыш из раунда, общая лента ----------
+  const claimedGrants = new Set();
+  A.claimGrant = async (id) => {             // забрать выигрыш онлайн-раунда сразу, не дожидаясь синхронизации
+    if (!id || claimedGrants.has(id)) return;
+    claimedGrants.add(id);
+    try { const r = await call("POST", `/api/grants/claim/${id}`, {}); A.applyReward(r, r.note || ""); syncMe(true); } catch {}
+  };
+  A.reportWin = (mode, value, gift, mult) => {
+    if (!canUse || !value) return;
+    call("POST", "/api/feed", { mode, value: Math.floor(value), gift, mult: mult || 0 }).catch(() => {});
+  };
+  const MODE_NAME = { classic: "апгрейд", streak: "серия", contract: "контракт", egg: "яйцо", crash: "краш", arena: "арена" };
+  let feedSig = "";
+  async function loadFeed() {
+    if (!canUse || A.tab !== "pageUp" || document.hidden) return;
+    let f;
+    try { f = await call("GET", "/api/feed"); } catch { return; }
+    $("#liveBox").hidden = false;
+    $("#liveOnline").textContent = fmt(f.online);
+    const rooms = [];
+    if (f.crash.players) rooms.push(`<i>Краш: ${f.crash.players}</i>`);
+    if (f.arena.players) rooms.push(`<i>Арена: ${f.arena.players}</i>`);
+    $("#liveRooms").innerHTML = rooms.join("");
+    const sig = f.feed.map((x) => x.at + x.user.id + x.value).join();
+    if (sig === feedSig) return;
+    feedSig = sig;
+    $("#liveFeed").innerHTML = f.feed.length ? f.feed.slice(0, 20).map((x) => {
+      const g = x.gift && byId[x.gift] ? byId[x.gift] : A.bestGift(x.value);
+      return `<div class="live-item">${g ? A.chip(g, "sm") : ava(x.user, "sm")}<span><b>${esc(x.user.name)}</b><em>${MODE_NAME[x.mode] || ""}${x.mult ? " · ×" + String(x.mult).replace(".", ",") : ""} · ${STAR}${A.fmtS(x.value)}</em></span></div>`;
+    }).join("") : `<div class="live-item"><span><em>Здесь появятся выигрыши игроков</em></span></div>`;
+  }
+
   // реферальный баннер: сервер рисует анимацию, Telegram даёт выбрать чат
   let sharing = false;
   A.shareRef = () => {
@@ -1320,6 +1353,7 @@
   A.onBack = () => { if (!ctx.hidden) return hideMenu(); if (!$("#viewer").hidden) return closeViewer(); closeChat(); };
   A.onTab = (id) => {
     clearInterval(listT);
+    if (id === "pageUp") loadFeed();
     if (id !== "pageChats") return;
     if (!canUse) return showOff();
     renderChats(); loadChats();
@@ -1420,6 +1454,7 @@
     paintHandle();
     if (!canUse) return;
     loadConfig(); setInterval(loadConfig, 60000);
+    loadFeed(); setInterval(loadFeed, 6000);
     syncMe(true);
     loadChats();
     setInterval(() => { if (A.tab !== "pageChats") loadChats(); }, 20000);

@@ -1,6 +1,7 @@
 // Режим «Краш». Раунды идут сами: приём ставок, полёт, краш, пауза.
 // Множитель растёт, пока ракета летит. Нужно забрать раньше, чем она взорвётся.
-// Сервера пока нет, поэтому остальные игроки в списке боты.
+// В Telegram раунд общий для всех: его разыгрывает сервер (server/games.py), в списке живые игроки.
+// Без сервера (локальная проверка) раунды считаются на устройстве, а соперники боты.
 (() => {
   "use strict";
   const A = window.App, { $, STAR, fmt, fmtS, xf } = A;
@@ -109,12 +110,12 @@
       : `<span class="hint-pill">Прошлые раунды появятся здесь</span>`;
   }
   function renderPlayers() {
-    const row = (name, bet, state, cls, tag) => `<div class="row ${cls}"><span class="ava sm">${name.charAt(0)}</span>
+    const row = (name, bet, state, cls, tag, photo) => `<div class="row ${cls}"><span class="ava sm ${photo ? "" : "tint"}" style="--h:${(name.length * 47) % 360};${photo ? `background-image:url('${photo}')` : ""}">${photo ? "" : name.charAt(0)}</span>
       <span class="grow">${name}${tag ? ` <em class="tag">бот</em>` : ""}</span><span class="hint">${STAR} ${fmtS(bet)}</span><b>${state}</b></div>`;
     const st = (p) => p.cashed ? `${xf(p.cashed)}` : phase === "end" ? "сгорело" : phase === "fly" ? "в игре" : "готов";
     const cls = (p) => p.cashed ? "cr-ok" : phase === "end" ? "cr-bad" : "";
     let html = my ? row("Вы", my.bet, st(my), cls(my) + " me", false) : "";
-    html += bots.filter((b) => b.joined).map((b) => row(b.name, b.bet, st(b), cls(b), true)).join("");
+    html += bots.filter((b) => b.joined).map((b) => row(b.name, b.bet, st(b), cls(b), !online, b.photo)).join("");
     $("#crPlayers").innerHTML = html || `<div class="row"><span class="grow hint">Ставок пока нет</span></div>`;
   }
   function renderNow(force) {
@@ -131,7 +132,8 @@
   }
   function setCta() {
     const v = A.stakeValue();
-    if (my && phase === "fly" && !my.cashed) return A.setCta({ html: `Забрать ${STAR}${fmtS(my.bet * m)}`, fn: () => cash(m) });
+    if (my && phase === "fly" && !my.cashed) return A.setCta({ html: `Забрать ${STAR}${fmtS(my.bet * m)}`, fn: () => (online ? cashOnline() : cash(m)) });
+    if (online && phase === "bet" && !my) return A.setCta({ html: v ? `Поставить ${STAR}${fmt(v)}` : "Выберите ставку", disabled: !v, fn: betOnline });
     if (my && !my.cashed && phase === "bet") return A.setCta({ html: "Ставка принята", disabled: true });
     if (phase === "bet") return A.setCta({ html: v ? `Поставить ${STAR}${fmt(v)}` : "Выберите ставку", disabled: !v, fn: bet });
     A.setCta({ html: "Ждём следующий раунд", disabled: true });
@@ -222,6 +224,106 @@
     if (now - phaseT > END_MS) newRound(now);
   }
 
+  // ---------- онлайн: общий раунд с сервера ----------
+  let online = false, srv = null, off = 0, pollTimer = 0, sending = false, claimedRound = null;
+  const srvNow = () => Date.now() + off;
+  async function poll() {
+    clearTimeout(pollTimer);
+    if (!active || !online) return;
+    try { const s = await A.api("GET", "/api/crash"); off = s.now - Date.now(); onState(s); } catch {}
+    pollTimer = setTimeout(poll, phase === "fly" ? 400 : 900);
+  }
+  function onState(s) {
+    const fresh = !srv || srv.id !== s.id;
+    srv = s;
+    hist = s.history || [];
+    if (fresh) {                                           // новый раунд
+      phase = "bet"; m = 1; lastNowId = null; sparks = []; smoke = []; cp = 1;
+      my = s.my ? { bet: s.my.bet, cashed: s.my.cashed || 0 } : null;
+      const box = $("#crashBox"); box.classList.remove("boom", "won", "fly");
+      $("#crRocket").classList.remove("gone"); $("#crashMult").textContent = "×1,00";
+      renderHist(); renderNow(true);
+    }
+    if (s.my) {
+      if (!my) my = { bet: s.my.bet, cashed: 0 };
+      if (s.my.cashed && !my.cashed) { my.cashed = s.my.cashed; onCashed(s.my.cashed, s.my.grant); }   // сработал автовывод
+    }
+    bots = s.bets.filter((b) => b.id !== A.myId).map((b) => ({ name: b.name, photo: b.photo, bet: b.bet, cashed: b.cashed || 0, joined: true }));
+    if (s.phase === "fly" && phase === "bet") { phase = "fly"; $("#crashBox").classList.add("fly"); $("#crashNote").textContent = "Летит"; }
+    if (s.phase === "end" && phase !== "end") { cp = s.cp; boomOnline(); }
+    renderPlayers(); setCta();
+  }
+  async function betOnline() {
+    const v = A.stakeValue();
+    if (phase !== "bet" || my || !v || sending) return;
+    sending = true;
+    const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
+    try {
+      await A.api("POST", "/api/crash/bet", { bet: v, auto: Number($("#crashAuto").value) || 0, gifts });
+      A.takeStake();
+      my = { bet: v, cashed: 0 };
+      A.busy = true; A.hap.hit();
+      renderPlayers(); renderNow(true); setCta();
+    } catch (e) { A.toast(e.status === 409 ? "Приём ставок закрыт, ждите следующий раунд" : "Нет связи с сервером"); }
+    finally { sending = false; }
+  }
+  async function cashOnline() {
+    if (!my || my.cashed || phase !== "fly" || sending) return;
+    sending = true;
+    try {
+      const r = await A.api("POST", "/api/crash/cashout", {});
+      my.cashed = r.cashed;
+      onCashed(r.cashed, r.grant);
+    } catch (e) { if (e.status === 409) A.toast("Не успели: ракета взорвалась"); }
+    finally { sending = false; }
+  }
+  function onCashed(at, grant) {
+    if (claimedRound === srv.id) return;
+    claimedRound = srv.id;
+    A.busy = false;
+    const stats = A.state().stats; stats.bestCrash = Math.max(stats.bestCrash, at); A.save();
+    $("#crashBox").classList.add("won");
+    A.log({ mode: "crash", win: true, bet: my.bet, id: null, mult: at, text: `Краш онлайн, забрано на ${xf(at)}. Хеш раунда ${srv.hash.slice(0, 16)}…` });
+    A.claimGrant(grant);                                     // выигрыш выдаёт сервер
+    renderPlayers(); renderNow(true); setCta();
+  }
+  function boomOnline() {
+    phase = "end"; m = cp;
+    const box = $("#crashBox"); box.classList.remove("fly"); box.classList.add("boom");
+    $("#crRocket").classList.add("gone");
+    $("#crashMult").textContent = xf(cp); $("#crashNote").textContent = "Взорвалась";
+    sparks = Array.from({ length: 46 }, () => {
+      const a = Math.random() * 7, sp = 1 + Math.random() * 5;
+      return { x: rx, y: ry, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1, s: 1.5 + Math.random() * 2.5, life: 1, c: ["#ffd84d", "#ff8a3d", "#ff5b6b", "#fff"][(Math.random() * 4) | 0] };
+    });
+    A.hap.boom();
+    if (my && !my.cashed) {
+      A.busy = false;
+      A.log({ mode: "crash", win: false, bet: my.bet, id: null, mult: 0, text: `Краш онлайн, точка ${xf(cp)}. Ставка не забрана. Число раунда ${srv.seed}` });
+      A.showMiss("Ракета взорвалась", `на ${xf(cp)} · −${fmt(my.bet)} ${STAR}`);
+    }
+    renderHist(); renderPlayers(); renderNow(true); setCta();
+  }
+  function frameOnline(now) {
+    if (!active) return;
+    raf = requestAnimationFrame(frameOnline);
+    frameN++;
+    if (!srv) return draw(now, false, false);
+    if (phase === "bet") {
+      if (frameN % 6 === 0) $("#crashNote").textContent = `Старт через ${Math.max(0, Math.ceil((srv.bet_end - srvNow()) / 1000))}`;
+      return draw(now, false, false);
+    }
+    if (phase === "fly") {
+      m = Math.exp((srv.speed * Math.max(0, srvNow() - srv.t0)) / 1000);
+      draw(now, true, false);
+      if (frameN % 3 === 0) { $("#crashMult").textContent = xf(m); if (my && !my.cashed) setCta(); }
+      if (frameN % 8 === 0) renderNow(false);
+      if (my && !my.cashed) A.hap.rise(m);
+      return;
+    }
+    draw(now, false, true);
+  }
+
   A.registerMode("crash", {
     init() {
       cv = $("#crashCv"); ctx = cv.getContext("2d");
@@ -234,11 +336,19 @@
     },
     enter() {
       active = true; size(); renderHist();
+      online = !!(A.apiReady && A.apiReady());
+      cancelAnimationFrame(raf);
+      if (online) {                                        // общий раунд с сервера
+        $("#crPlayersHead") && ($("#crPlayersHead").textContent = "Игроки онлайн");
+        poll(); raf = requestAnimationFrame(frameOnline);
+        if (rider && !A.REDUCED) rider.play();
+        return;
+      }
       if (!round || phase === "end" || (phase === "fly" && !my)) newRound(performance.now()); else { phaseT = performance.now() - (phase === "bet" ? 0 : (Math.log(m) / SPEED) * 1000); setCta(); }
-      cancelAnimationFrame(raf); raf = requestAnimationFrame(frame);
+      raf = requestAnimationFrame(frame);
       if (rider && !A.REDUCED) rider.play();
     },
-    leave() { active = false; cancelAnimationFrame(raf); if (rider) rider.pause(); },
+    leave() { active = false; cancelAnimationFrame(raf); clearTimeout(pollTimer); if (rider) rider.pause(); },
     onStake() { if (active) setCta(); },
     lockStake() { return !!(my && !my.cashed && phase !== "end"); },
     crashPoint,
