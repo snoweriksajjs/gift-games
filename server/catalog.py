@@ -2,7 +2,12 @@
 старые номера g0…g8176 переводятся через таблицу legacy. Узор только для красоты.
 Цена = минимальная цена коллекции на рынке (в звёздах) × редкость модели и фона, не больше ×15."""
 import json, os, re
-from urllib.parse import quote
+from urllib.parse import quote as _quote
+
+
+def quote(t):
+    """На CDN файлы названы с обычным апострофом: «Eve’s Apple» лежит как «Eve's Apple»."""
+    return _quote(t.replace("\u2019", "'"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CDN = "https://cdn.changes.tg/gifts"

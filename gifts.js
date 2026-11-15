@@ -4,7 +4,8 @@ window.GIFT_DATA = {"cols":[["Santa Hat",653,[["80s TV",15],["All-Star",5],["Aur
 // Каталог собирается на лету: подарок = коллекция + модель + фон, номер вида "c12.5.33".
 // Старые номера g0…g8176 переводятся через таблицу legacy, коллекции игроков не меняются.
 (() => {
-  const D = window.GIFT_DATA, enc = encodeURIComponent, CDN = "https://cdn.changes.tg/gifts";
+  // на CDN файлы названы с обычным апострофом: «Eve’s Apple» лежит как «Eve's Apple»
+  const D = window.GIFT_DATA, enc = (t) => encodeURIComponent(t.replace(/\u2019/g, "'")), CDN = "https://cdn.changes.tg/gifts";
   const cols = D.cols, bds = D.bds;
   const floors = cols.map((c) => c[1]);                  // минимальная цена коллекции в звёздах
   const baseFloors = Object.fromEntries(cols.map((c) => [c[0], c[1]]));

@@ -238,7 +238,9 @@
 
   // ---------- разметка подарков ----------
   const bg = (s) => `--c1:${s.c1};--c2:${s.c2};--ct:${s.ct};--cp:${s.cp};--sym:url('${s.sym}')`;
-  const pic = (s, eager) => `<img src="${s.img}" alt="" ${eager ? "" : 'loading="lazy"'} decoding="async" draggable="false">`;
+  // если картинки нет на CDN, берём её с API того же сервиса (cdn …/models/Подарок/png/Модель.png → api …/model/Подарок/Модель.png)
+  window.giftImgFallback = (img) => { img.onerror = null; img.src = img.src.replace("cdn.changes.tg/gifts/models/", "api.changes.tg/model/").replace("/png/", "/") + "?size=256"; };
+  const pic = (s, eager) => `<img src="${s.img}" alt="" ${eager ? "" : 'loading="lazy"'} decoding="async" draggable="false" onerror="giftImgFallback(this)">`;
   function tile(s, cls = "", attrs = "") {
     return `<div class="gift ${cls}" style="${bg(s)}" ${attrs} tabindex="0" role="button" aria-label="${s.gift}, ${s.model}, ${fmt(s.price)} звёзд">
       <i class="pat"></i><span class="rib">${String(s.rare).replace(".", ",")}%</span>${pic(s)}
