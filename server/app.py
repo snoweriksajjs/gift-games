@@ -522,6 +522,7 @@ def api(method, path, uid, body, query):
 
     if len(p) == 2 and p[0] == "user" and method == "GET":
         tid = int(p[1])
+        profiles.viewed(tid, uid, now)
         return user_card(tid, True) | {"blocked": blocked(uid, tid)}
 
     if p == ["block"] and method == "POST":

@@ -670,24 +670,15 @@
       const paint = () => {
         const g = styleOf(u.look), mine = u.id === myId;
         const gifts = (u.gifts || []).filter((id) => byId[id]);
-        const R = A.profileAva ? A : null;   // профиль как в Telegram (js/profile.js)
-        el.innerHTML = `${cover(u.look, u.id, `${R ? R.profileAva(u, ava(u, "xl")) : ava(u, "xl")}<h2>${esc(u.name)}${vm(u)}${giftMark(u.look)}</h2><p class="${Date.now() / 1000 - u.seen < 120 ? "online" : ""}">${esc(seenText(u))}</p>`)}
-          ${R ? `<div class="pr-wrap">${R.musicHtml(u.music)}</div>` : ""}
-          ${mine ? "" : `<div class="pn-acts">${actBtn("dm", "Сообщение", "dm")}${actBtn("gift", "Подарок", "gift")}${u.handle ? actBtn("copy", "Ссылка", "link") : ""}</div>`}
-          ${R ? `<div class="pr-wrap">${R.profileInfo(u)}</div>` : ""}
-          ${u.bio || g ? `<section class="list pn-info">
-            ${u.bio ? `<div class="pn-line"><b class="pre">${esc(u.bio)}</b><span>о себе</span></div>` : ""}
-            ${g ? `<div class="pn-line"><b>${esc(g.gift)} ✦</b><span>особый стиль коллекции</span></div>` : ""}
-          </section>` : ""}
-          <div class="seg flush pr-tabs"><button data-ptab="gifts" class="${ptab === "gifts" ? "on" : ""}">Подарки${gifts.length ? " · " + gifts.length : ""}</button><button data-ptab="stories" class="${ptab === "stories" ? "on" : ""}">Истории${u.stories ? " · " + u.stories : ""}</button></div>
-          ${ptab === "gifts" ? (gifts.length ? `<div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}</button>`).join("")}</div>` : `<p class="pn-note">Подарков пока нет</p>`)
-            : `<div class="pr-st-box"></div>`}
-          ${mine ? "" : `<section class="list"><button class="row pn-row ${u.blocked ? "" : "danger"}" data-act="block">${u.blocked ? "Разблокировать" : "Заблокировать"}</button></section>
+        const acts = mine ? "" : `<div class="pn-acts">${actBtn("dm", "Сообщение", "dm")}${actBtn("gift", "Подарок", "gift")}${u.handle ? actBtn("copy", "Ссылка", "link") : ""}</div>`;
+        el.innerHTML = A.profileView(u, { look: safeLook(u.look) || {}, tab: ptab, avaHtml: ava(u, "xl"), giftMark: giftMark(u.look) })
+          .replace('<div class="tgp-body">', `<div class="tgp-body">${acts}`) + `
+          ${mine ? "" : `<section class="list tgp-block"><button class="row pn-row ${u.blocked ? "" : "danger"}" data-act="block">${u.blocked ? "Разблокировать" : "Заблокировать"}</button></section>
           <p class="pn-note">${u.blocked ? "Игрок не может писать вам в личку и дарить подарки." : "Заблокированный игрок не сможет писать вам в личку и дарить подарки."}</p>`}`;
       };
       el.onclick = async (e) => {
-        const tb = e.target.closest("[data-ptab]");
-        if (tb) { ptab = tb.dataset.ptab; paint(); if (ptab === "stories" && A.storiesGrid) A.storiesGrid(u.id, el.querySelector(".pr-st-box")); return; }
+        const tb = e.target.closest("[data-pvtab]");
+        if (tb) { ptab = tb.dataset.pvtab; paint(); if (ptab === "stories" && A.storiesGrid) A.storiesGrid(u.id, el.querySelector(".pr-st-box")); return; }
         const b = e.target.closest("[data-act]"), gb = e.target.closest("[data-g]");
         if (gb) return A.openGift(byId[gb.dataset.g], null);
         if (!b) return;

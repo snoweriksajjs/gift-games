@@ -231,7 +231,17 @@
     let orbit = [...(me.orbit || [])];
     const tagsCount = (me.handle ? 1 : 0) + (me.tags || []).length;
     const paint = () => {
+      const NC = A.NAME_COLORS || {};
       $("#peBody").innerHTML = `
+        <h4 class="sec-title">Цвет ника</h4>
+        <div class="pe-colors">
+          <button class="pe-color none ${!me.name_color ? "on" : ""}" data-nc="" aria-label="Обычный">Aa</button>
+          ${Object.entries(NC).map(([k, v]) => { const grad = v.startsWith("linear"); return `<button class="pe-color ${me.name_color === k ? "on" : ""} ${grad && !me.verified ? "lock" : ""}" data-nc="${k}" style="background:${v}" aria-label="${k}">${grad && !me.verified ? "🔒" : ""}</button>`; }).join("")}
+        </div>
+        <p class="pn-note">Градиенты доступны с галочкой.</p>
+        <h4 class="sec-title">Описание</h4>
+        <div class="pe-add"><textarea id="peBio" maxlength="140" rows="2" placeholder="Пара слов о себе">${esc(me.bio || "")}</textarea></div>
+        <button class="mini-btn" data-bio-save>Сохранить описание</button>
         <h4 class="sec-title">Галочка</h4>
         ${me.verified ? `<div class="pe-checks">${Object.entries(CHECKS).map(([k, c]) => `<button class="pe-check ${me.check === k ? "on" : ""}" data-check="${k}">${A.check(k)}<span>${c.name}</span></button>`).join("")}</div>
           <p class="pn-note">Рядом с именем и в профиле: «Аккаунт верифицирован организацией DuckChance».</p>`
@@ -250,7 +260,7 @@
         <h4 class="sec-title">Канал в профиле</h4>
         ${chans.length ? `<section class="list">${[{ id: 0, title: "Не показывать" }, ...chans].map((c) => `<button class="row pn-row ${(me.channel ? me.channel.id : 0) === c.id ? "sel" : ""}" data-set-chan="${c.id}"><span class="grow">${esc(c.title)}</span>${(me.channel ? me.channel.id : 0) === c.id ? "✓" : ""}</button>`).join("")}</section>`
           : `<p class="pn-note">Создайте свой канал во вкладке «Чаты», и его можно будет показать в профиле.</p>`}
-        <h4 class="sec-title">Подарки вокруг аватарки · ${orbit.length} из 6</h4>
+        <h4 class="sec-title" id="peOrbitT">Подарки вокруг аватарки · ${orbit.length} из 6</h4>
         ${gifts.length ? `<div class="pe-gifts">${gifts.map((g) => `<button class="pe-gift ${orbit.includes(g) ? "on" : ""}" data-orbit="${g}" style="${A.bg(A.byId[g])}"><i class="pat"></i>${A.pic(A.byId[g])}</button>`).join("")}</div>
           <button class="cta inline" data-orbit-save>Сохранить подарки</button>` : `<p class="pn-note">Выиграйте подарки, и их можно будет поставить вокруг аватарки.</p>`}
         <h4 class="sec-title">Истории</h4>
@@ -261,6 +271,14 @@
     $("#peBody").onclick = async (e) => {
       const b = e.target.closest("button"); if (!b) return;
       if (b.dataset.check) return save({ check: b.dataset.check });
+      if (b.dataset.nc != null) {
+        if (b.classList.contains("lock")) return A.toast("Градиентный ник доступен с галочкой");
+        return save({ name_color: b.dataset.nc || null });
+      }
+      if (b.hasAttribute("data-bio-save")) {
+        try { const r = await A.api("POST", "/api/me", { bio: $("#peBio").value.trim() }); me = { ...me, bio: r.me.bio }; A.toast("Описание сохранено"); if (A.refreshMe) A.refreshMe(); } catch { A.toast("Не получилось сохранить"); }
+        return;
+      }
       if (b.hasAttribute("data-buy-check")) {
         if (!confirm("Купить галочку за 100 звёзд?")) return;
         try { const r = await A.api("POST", "/api/verify/buy", {}); me = r.me; if (r.state) A.applyServer(r.state); A.hap.win(); A.toast("Галочка ваша, выберите дизайн"); paint(); if (A.refreshMe) A.refreshMe(); }
@@ -299,7 +317,7 @@
         const g = b.dataset.orbit, i = orbit.indexOf(g);
         if (i >= 0) orbit.splice(i, 1); else if (orbit.length < 6) orbit.push(g); else return A.toast("Не больше 6 подарков");
         b.classList.toggle("on", orbit.includes(g)); A.hap.select();
-        const h = b.closest(".sheet-body").querySelectorAll(".sec-title")[4]; if (h) h.textContent = `Подарки вокруг аватарки · ${orbit.length} из 6`;
+        const h = $("#peOrbitT"); if (h) h.textContent = `Подарки вокруг аватарки · ${orbit.length} из 6`;
         return;
       }
       if (b.hasAttribute("data-orbit-save")) { if (await save({ orbit })) A.toast("Подарки вокруг аватарки сохранены"); return; }
@@ -310,6 +328,78 @@
   }
   A.openProfileEditor = openEditor;
 
+  // ---------- профиль целиком, как в Telegram ----------
+  const NAME_COLORS = {
+    red: "#ff5a5a", orange: "#ff9f43", violet: "#a974ff", green: "#3ecf6f", cyan: "#2ec4e6", blue: "#3b9cff", pink: "#ff6fb5",
+    sunset: "linear-gradient(90deg,#ff5a5a,#ffb443)", berry: "linear-gradient(90deg,#a974ff,#ff6fb5)", sea: "linear-gradient(90deg,#3ecf6f,#2ec4e6)",
+    night: "linear-gradient(90deg,#3b9cff,#a974ff)", gold: "linear-gradient(90deg,#ffe27a,#f09a12)", aqua: "linear-gradient(90deg,#2ec4e6,#3b9cff)",
+    fire: "linear-gradient(90deg,#ffcf3a,#ff3d3d)",
+  };
+  A.NAME_COLORS = NAME_COLORS;
+  const nameStyle = (c) => { const v = NAME_COLORS[c]; return !v ? "" : v.startsWith("linear") ? `background:${v};-webkit-background-clip:text;background-clip:text;color:transparent` : `color:${v}`; };
+  const SPARKS = [[12, 18, 14], [86, 14, 12], [8, 52, 10], [92, 46, 14], [22, 80, 9], [78, 76, 11], [30, 8, 8], [70, 6, 9], [50, 92, 8]];
+  const fmtK = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(".0", "").replace(".", ",") + "к" : String(n));
+  const seenText = (u) => { const s = Date.now() / 1000 - (u.seen || 0); return s < 120 ? "в сети" : s < 3600 ? `был(а) ${Math.round(s / 60)} мин назад` : s < 86400 ? `был(а) ${Math.round(s / 3600)} ч назад` : "был(а) давно"; };
+  const ICON = {
+    pen: `<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>`,
+    shield: `<svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.2 7 10 4-1.8 7-5.6 7-10V6z"/></svg>`,
+    brush: `<svg viewBox="0 0 24 24"><path d="M14 4l6 6-8 8H6v-6z"/><path d="M4 20l2-2"/></svg>`,
+    x: `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
+    copy: `<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>`,
+    cal: `<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>`,
+    eye: `<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
+    note: `<svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>`,
+  };
+  // u: полная карточка с сервера; opts.own: свой профиль; opts.close: кнопка закрыть; avaHtml: аватарка (кружок с фото)
+  A.profileView = (u, opts = {}) => {
+    const look = opts.look || {};
+    const coverStyle = look.c1 ? `--c1:${look.c1};--c2:${look.c2};--cp:${look.cp || look.c2}` + (look.sym ? `;--sym:url('${look.sym}')` : "") : "";
+    const since = u.since ? new Date(u.since * 1000).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }) : "";
+    const gifts = (u.gifts || []).filter((g) => A.byId[g]);
+    const tab = opts.tab || "gifts";
+    return `<div class="tgp">
+      <div class="tgp-head ${look.sym ? "has" : ""}" style="${coverStyle}">
+        <div class="tgp-top">
+          ${opts.own ? `<button class="tgp-ic" data-pv="fair" aria-label="Честная игра">${ICON.shield}</button><button class="tgp-ic" data-pv="look" aria-label="Оформление">${ICON.brush}</button><button class="tgp-ic" data-pv="edit" aria-label="Изменить профиль">${ICON.pen}</button>` : ""}
+          ${opts.close ? `<button class="tgp-ic" data-pv="close" aria-label="Закрыть">${ICON.x}</button>` : ""}
+        </div>
+        <div class="tgp-hero">${SPARKS.map(([x, y, sz], i) => `<i class="tgp-spark" style="left:${x}%;top:${y}%;font-size:${sz}px;animation-delay:${(i * 0.37).toFixed(2)}s">✦</i>`).join("")}
+          ${A.profileAva(u, opts.avaHtml || "")}</div>
+        <h1 class="tgp-name"><span style="${nameStyle(u.name_color)}">${esc(u.name)}</span>${A.verMark(u)}${opts.giftMark || ""}</h1>
+        <div class="tgp-pills"><span class="tgp-pill ${seenText(u) === "в сети" ? "on" : ""}">${seenText(u)}</span></div>
+        ${u.balance != null ? `<button class="tgp-bal" data-pv="balance">Баланс: ${STAR} <b>${fmt(u.balance)}</b> <i>›</i></button>` : ""}
+        ${u.music ? `<button class="tgp-music" data-music="${esc(u.music.url)}">${ICON.note}<span>${esc(u.music.title)}</span><b class="pm-eq"><i></i><i></i><i></i></b><i class="tgp-chev">›</i></button>` : ""}
+      </div>
+      <div class="tgp-body">
+        ${u.channel ? A.profileInfo({ channel: u.channel }) : ""}
+        <div class="tgp-info">
+          ${u.handle ? `<div class="tgp-row"><button class="pr-tag main" data-copy="@${esc(u.handle)}">@${esc(u.handle)} ${ICON.copy}</button>
+            ${(u.tags || []).length ? `<span class="tgp-sub">а также ${(u.tags || []).map((t) => `<button class="pr-tag" data-copy="@${esc(t)}">@${esc(t)}</button>`).join(", ")}</span>` : `<span class="tgp-sub">Имя пользователя</span>`}</div>` : ""}
+          ${u.bio ? `<div class="tgp-row"><b class="pre">${esc(u.bio)}</b><span class="tgp-sub">Описание</span></div>` : ""}
+          ${since ? `<div class="tgp-line">${ICON.cal}<span>В DuckChance с ${since}</span></div>` : ""}
+          <div class="tgp-line">${ICON.eye}<span>${fmtK(u.views || 0)}</span></div>
+        </div>
+        ${u.verified ? `<p class="tgp-verified">Аккаунт верифицирован организацией «DuckChance».</p>` : ""}
+        <div class="tgp-tabs"><button data-pvtab="gifts" class="${tab === "gifts" ? "on" : ""}">Подарки</button><button data-pvtab="stories" class="${tab === "stories" ? "on" : ""}">Истории</button></div>
+        <div class="tgp-tab">${tab === "gifts" ? (gifts.length ? `<div class="tgp-gifts">${gifts.map((g) => `<button class="tgp-gift" data-g="${g}" style="${A.bg(A.byId[g])}"><i class="pat"></i>${A.pic(A.byId[g])}</button>`).join("")}</div>` : `<p class="pn-note">Подарков пока нет</p>`) : `<div class="pr-st-box"></div>`}</div>
+      </div></div>`;
+  };
+  // общие действия профиля (вкладки, кнопки сверху)
+  A.bindProfileView = (root, u, opts, repaint) => {
+    root.onclick = (e) => {
+      const t = e.target.closest("[data-pvtab]");
+      if (t) { opts.tab = t.dataset.pvtab; repaint(); if (opts.tab === "stories") A.storiesGrid(u.id, root.querySelector(".pr-st-box")); return; }
+      const g = e.target.closest(".tgp-gift[data-g]"); if (g && A.openGift) return A.openGift(A.byId[g.dataset.g], null);
+      const b = e.target.closest("[data-pv]"); if (!b) return;
+      const a = b.dataset.pv;
+      if (a === "edit") return openEditor();
+      if (a === "fair") return document.querySelector("#fairBtn") && document.querySelector("#fairBtn").click();
+      if (a === "look") return document.querySelector("#bannerEdit") && document.querySelector("#bannerEdit").click();
+      if (a === "balance" && opts.own) return document.querySelector("[data-deposit]") && document.querySelector("[data-deposit]").click();
+      if (a === "close" && opts.onClose) return opts.onClose();
+    };
+  };
+
   // ---------- свой профиль на вкладке «Профиль» ----------
   let meCard = null, meAt = 0;
   async function loadMe(force) {
@@ -318,28 +408,22 @@
     try { meCard = await A.api("GET", `/api/user/${A.myId}`); meAt = Date.now(); } catch {}
     return meCard;
   }
+  let myTab = "gifts";
   function paint(u) {
-    const banner = $("#pfBanner"), rich = $("#pfRich");
-    if (!banner || !rich || !u) return;
-    // аватарка в обёртке: кружок истории и подарки вокруг
-    let wrap = banner.querySelector(".pr-ava");
-    const av = banner.querySelector(".ava.xl");
-    if (!wrap && av) { wrap = document.createElement("button"); wrap.className = "pr-ava"; av.replaceWith(wrap); wrap.appendChild(av); }
-    if (wrap) {
-      wrap.className = `pr-ava ${A.storyRing(u)}`; wrap.dataset.stories = u.id;
-      const o = wrap.querySelector(".orbit"); if (o) o.remove();
-      wrap.insertAdjacentHTML("beforeend", A.orbitHtml(u.orbit));
-    }
-    let ck = banner.querySelector("#pfCheck");
-    if (!ck) { ck = document.createElement("span"); ck.id = "pfCheck"; banner.querySelector("h1").appendChild(ck); }
-    ck.innerHTML = A.verMark(u);
-    rich.hidden = false;
-    rich.innerHTML = `${A.musicHtml(u.music)}${A.profileInfo(u)}
-      <div class="pr-acts"><button class="cta inline second" data-pe>Изменить профиль</button><button class="cta inline second" data-st-add>+ История</button></div>
-      ${u.stories ? `<div class="pf-head"><h2>Истории</h2><span>${u.stories}</span></div><div id="pfStories"></div>` : ""}`;
-    rich.querySelector("[data-pe]").onclick = () => openEditor();
-    rich.querySelector("[data-st-add]").onclick = () => A.addStory();
-    const sg = rich.querySelector("#pfStories"); if (sg) A.storiesGrid(u.id, sg);
+    const view = $("#pfView"), banner = $("#pfBanner");
+    if (!view || !u) return;
+    const av = banner && banner.querySelector(".ava.xl");
+    const look = A.bannerLook ? A.bannerLook() : {};
+    const g = look.gift && A.byId[look.gift] ? A.byId[look.gift] : null;
+    const opts = { own: true, look, tab: myTab, avaHtml: av ? av.outerHTML.replace(/\sdata-ava(="[^"]*")?/, "") : "",
+      giftMark: g ? `<img class="nm-gift" src="${g.img}" alt="">` : "" };
+    const draw = () => { myTab = opts.tab; view.innerHTML = A.profileView(u, opts); };
+    draw();
+    view.hidden = false;
+    if (banner) banner.hidden = true;
+    const rich = $("#pfRich"); if (rich) rich.hidden = true;
+    A.bindProfileView(view, u, opts, draw);
+    if (myTab === "stories") A.storiesGrid(u.id, view.querySelector(".pr-st-box"));
   }
   A.paintMyProfile = async () => { if (meCard) paint(meCard); paint(await loadMe()); };
   A.refreshMe = async () => { paint(await loadMe(true)); };

@@ -13,6 +13,9 @@ G = {}
 TAG = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,31}$")
 MAX_TAGS, TAG_PRICE, CHECK_PRICE = 10, 50, 100
 CHECKS = ["classic", "mint", "violet", "gold", "rose", "fire", "ice", "dark"]   # дизайны галочки
+# цвет ника: однотонные для всех, градиенты для аккаунтов с галочкой
+NAME_SOLID = ["red", "orange", "violet", "green", "cyan", "blue", "pink"]
+NAME_GRAD = ["sunset", "berry", "sea", "night", "gold", "aqua", "fire"]
 STORY_TTL = 86400
 
 
@@ -26,8 +29,9 @@ def bind(g):
       created INTEGER, deleted INTEGER);
     CREATE INDEX IF NOT EXISTS stories_user ON stories (user, id);
     CREATE TABLE IF NOT EXISTS story_views (story INTEGER, user INTEGER, at INTEGER, PRIMARY KEY (story, user));
+    CREATE TABLE IF NOT EXISTS profile_views (user INTEGER, viewer INTEGER, at INTEGER, PRIMARY KEY (user, viewer));
     """)
-    for c, d in [("music", "TEXT"), ("channel", "INTEGER"), ("orbit", "TEXT"), ("verified", "INTEGER"), ("check_style", "TEXT")]:
+    for c, d in [("music", "TEXT"), ("channel", "INTEGER"), ("orbit", "TEXT"), ("verified", "INTEGER"), ("check_style", "TEXT"), ("name_color", "TEXT")]:
         g["add_column"]("users", c, d)
 
 
@@ -68,10 +72,14 @@ def active_story(uid):
 
 def extra(uid, full=False, viewer=None):
     """Добавка к карточке игрока: галочка и истории. В полной карточке ещё музыка, канал, юзернеймы и подарки."""
-    u = q1("SELECT verified, check_style, music, channel, orbit FROM users WHERE id=?", uid) or {}
+    u = q1("SELECT verified, check_style, music, channel, orbit, name_color, created FROM users WHERE id=?", uid) or {}
     verified = bool(u.get("verified")) or is_admin(uid)
     st = active_story(uid)
-    out = {"verified": verified, "check": (u.get("check_style") or "classic") if verified else None, "story": st["id"] if st else 0}
+    nc = u.get("name_color")
+    if nc in NAME_GRAD and not verified:
+        nc = None
+    out = {"verified": verified, "check": (u.get("check_style") or "classic") if verified else None, "story": st["id"] if st else 0,
+           "name_color": nc}
     if st and viewer:
         out["story_seen"] = bool(q1("SELECT 1 x FROM story_views WHERE story=? AND user=?", st["id"], viewer))
     if not full:
@@ -86,7 +94,17 @@ def extra(uid, full=False, viewer=None):
     own = {r["gift"] for r in q("SELECT gift FROM inventory WHERE user=?", uid)}
     out["orbit"] = [g for g in orbit if g in own][:6]      # подарок продан или передан: с аватарки пропадает
     out["stories"] = (q1("SELECT COUNT(*) n FROM stories WHERE user=? AND deleted IS NULL", uid) or {}).get("n", 0)
+    out["views"] = (q1("SELECT COUNT(*) n FROM profile_views WHERE user=?", uid) or {}).get("n", 0)
+    out["since"] = u.get("created") or 0
+    w = q1("SELECT balance FROM wallets WHERE user=?", uid)
+    out["balance"] = w["balance"] if w else None
     return out
+
+
+def viewed(uid, viewer, now):
+    """Просмотр профиля: каждый игрок считается один раз."""
+    if viewer != uid:
+        run("INSERT OR IGNORE INTO profile_views (user, viewer, at) VALUES (?, ?, ?)", uid, viewer, now)
 
 
 def story_out(s, viewer):
@@ -124,6 +142,13 @@ def handle(method, p, uid, body, query, now):
                 if isinstance(g, str) and g in own and own.count(g) > pick.count(g):
                     pick.append(g)
             sets.append(("orbit", json.dumps(pick)))
+        if "name_color" in body:
+            nc = body["name_color"]
+            if nc and nc not in NAME_SOLID + NAME_GRAD:
+                raise err(400, "bad color")
+            if nc in NAME_GRAD and not extra(uid)["verified"]:
+                raise err(403, "not verified")
+            sets.append(("name_color", nc or None))
         if "check" in body:
             if body["check"] not in CHECKS:
                 raise err(400, "bad check")
