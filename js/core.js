@@ -672,6 +672,12 @@
     clientSeed.value = state.fair.clientSeed;
     $("#fairNonce").textContent = state.fair.nonce;
     verifyBox.hidden = !h;
+    if (h && h.online) return openFairOnline(h);
+    if (h && !h.serverSeed) {                     // онлайн-раунд, сыгранный до обновления проверки
+      verifyBox.classList.remove("bad");
+      verifyBox.innerHTML = `<b>Онлайн-раунд</b><span>${esc(h.text)}</span><span>Этот раунд сыгран до того, как проверка онлайн-раундов появилась в истории.</span>`;
+      return openSheet(fairSheet);
+    }
     if (h) {
       const hashOk = hex(sha256(enc(h.serverSeed))) === h.hash;
       const r = Fair.roll(h.serverSeed, h.clientSeed, h.nonce);
@@ -685,6 +691,40 @@
         <span>Хэш до раунда ${hashOk ? "совпадает" : "не совпадает"}: <code>${h.hash}</code></span>
         <span>Ваш сид: <code>${h.clientSeed}</code></span>`;
     }
+    openSheet(fairSheet);
+  }
+  // онлайн-раунды (Краш, Арена) разыгрывает сервер: до раунда он показывает отпечаток sha256(число:доля возврата),
+  // после раунда раскрывает число. Здесь пересчитываем результат и сверяем с тем, что произошло
+  function openFairOnline(h) {
+    const o = h.online, n = (x) => (x * 100).toFixed(3).replace(".", ",");
+    let rows = [], ok = false;
+    if (!o.seed) {
+      verifyBox.classList.remove("bad");
+      verifyBox.innerHTML = `<b>Раунд ещё не раскрыт</b><span>${esc(h.text)}</span><span>Отпечаток: <code>${esc(o.hash)}</code></span>`;
+      return openSheet(fairSheet);
+    }
+    const hashOk = hex(sha256(enc(`${o.seed}:${o.rtp}`))) === o.hash;
+    const roll = parseInt(hex(sha256(enc(o.seed))).slice(0, 13), 16) / 16 ** 13;
+    if (o.kind === "crash") {
+      const cp = Math.min(1000, Math.max(1, Math.floor((o.rtp / (1 - roll)) * 100) / 100));
+      ok = hashOk && Math.abs(cp - o.cp) < 1e-9;
+      rows = [`Точка взрыва по формуле: ${xf(cp)}, в игре: ${xf(o.cp)}`];
+    } else {
+      const total = o.shares.reduce((a, b) => a + b, 0);
+      let acc = 0, wi = o.shares.length - 1;
+      for (let i = 0; i < o.shares.length; i++) { acc += o.shares[i] / total; if (roll < acc) { wi = i; break; } }
+      ok = hashOk && wi === o.winner;
+      rows = [`Побеждает доля, в которую попало число: игрок №${wi + 1}, в игре: №${o.winner + 1}`];
+    }
+    verifyBox.classList.toggle("bad", !ok);
+    verifyBox.innerHTML = `
+      <b>${ok ? "Результат подтверждён" : "Проверка не прошла"}</b>
+      <span>${esc(h.text)}</span>
+      <span>Число раунда: ${n(roll)}</span>
+      ${rows.map((r) => `<span>${esc(r)}</span>`).join("")}
+      <span>Доля возврата раунда: ${Math.round(o.rtp * 1000) / 10}%</span>
+      <span>Отпечаток до раунда ${hashOk ? "совпадает" : "не совпадает"}: <code>${esc(o.hash)}</code></span>
+      <span>Раскрытое число: <code>${esc(o.seed)}</code></span>`;
     openSheet(fairSheet);
   }
   $("#fairBtn").addEventListener("click", () => openFair());

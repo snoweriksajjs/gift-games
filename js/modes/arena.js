@@ -266,6 +266,7 @@
     if (!v || sending || mine()) return;
     const mb = (A.live && A.live.max_bet) || 100000;
     if (v > mb) return A.toast(`Максимальная ставка ${fmt(mb)} звёзд`);
+    if (v < 10) return A.toast("Минимальная ставка на арене 10 звёзд");
     sending = true;
     const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
     try {
@@ -329,7 +330,8 @@
     if (me) { A.state().arenaStake = null; A.save(); }
     if (me) {
       A.log({ mode: "arena", win: !!w.me, bet: me.value, id: null, mult: w.me ? st.payout / me.value : 0,
-        text: `Арена онлайн, игроков ${players.length}, банк ${fmt(st.total)}, победил ${w.me ? "вы" : w.name}. Число раунда ${st.seed}` });
+        text: `Арена онлайн, игроков ${players.length}, банк ${fmt(st.total)}, победил ${w.me ? "вы" : w.name}`,
+        online: { kind: "arena", round: st.id, hash: st.hash, seed: st.seed, rtp: st.rtp, winner: wi, shares: st.players.map((p) => p.value) } });
       await A.wait(A.REDUCED ? 50 : 650);
       if (w.me) {
         A.state().stats.arenaWins++;

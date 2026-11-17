@@ -26,13 +26,16 @@ def max_bet():
     return int(G["admin"].settings().get("max_bet") or 100000)
 
 
+MIN_BET = 10     # меньше нельзя: на 1–9 звёздах округление выплаты вниз заметно съедает выигрыш
+
+
 def bet_of(body, key="bet"):
     """Целая ставка от 1 до max_bet, иначе 400 (бесконечность, текст и дроби отклоняются)."""
     v = body.get(key)
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v != int(v):
         raise G["HttpError"](400, "bad bet")
     v = int(v)
-    if not 1 <= v <= max_bet():
+    if not MIN_BET <= v <= max_bet():
         raise G["HttpError"](400, "bad bet")
     return v
 
@@ -86,10 +89,15 @@ crash = {}
 crash_hist = []
 
 
+def commit(seed, r):
+    """Отпечаток раунда: и секретное число, и доля возврата. Админ не может поменять шансы уже объявленного раунда."""
+    return hashlib.sha256(f"{seed}:{r}".encode()).hexdigest()
+
+
 def crash_new():
-    seed = secrets.token_hex(16)
+    seed, r = secrets.token_hex(16), round(rtp("crash"), 4)
     crash.clear()
-    crash.update({"id": now_ms(), "phase": "bet", "seed": seed, "hash": hashlib.sha256(seed.encode()).hexdigest(),
+    crash.update({"id": now_ms(), "phase": "bet", "seed": seed, "rtp": r, "hash": commit(seed, r),
                   "bet_end": now_ms() + CRASH_BET_MS, "t0": None, "cp": None, "bets": {}})
 
 
@@ -113,7 +121,7 @@ def crash_tick(t):
         return crash_new()
     ph = crash["phase"]
     if ph == "bet" and t >= crash["bet_end"]:
-        cp = min(1000.0, max(1.0, math.floor(rtp("crash") / (1 - roll_of(crash["seed"])) * 100) / 100))
+        cp = min(1000.0, max(1.0, math.floor(crash["rtp"] / (1 - roll_of(crash["seed"])) * 100) / 100))
         crash.update({"phase": "fly", "t0": t, "cp": cp, "crash_at": t + int(math.log(cp) / SPEED * 1000)})
     elif ph == "fly":
         m = crash_m(t)
@@ -135,7 +143,7 @@ def crash_state(uid):
            "history": crash_hist[:14],
            "bets": [{**card(u), "bet": b["bet"], "cashed": b["cashed"], "gift": b.get("gift")} for u, b in c["bets"].items()]}
     if c["phase"] == "end":
-        out.update({"cp": c["cp"], "seed": c["seed"]})
+        out.update({"cp": c["cp"], "seed": c["seed"], "rtp": c["rtp"]})
     mine = c["bets"].get(uid)
     if mine:
         out["my"] = {"bet": mine["bet"], "cashed": mine["cashed"], "auto": mine["auto"], "grant": mine.get("grant"), "held": mine.get("held", False)}
@@ -148,9 +156,9 @@ arena_hist = []
 
 
 def arena_new():
-    seed = secrets.token_hex(16)
+    seed, r = secrets.token_hex(16), round(rtp("arena"), 4)
     arena.clear()
-    arena.update({"id": now_ms(), "phase": "wait", "seed": seed, "hash": hashlib.sha256(seed.encode()).hexdigest(),
+    arena.update({"id": now_ms(), "phase": "wait", "seed": seed, "rtp": r, "hash": commit(seed, r),
                   "players": [], "ends_at": None, "play_at": None, "winner": None, "payout": 0})
 
 
@@ -169,7 +177,7 @@ def arena_tick(t):
             if roll < acc:
                 wi = i
                 break
-        payout = int(total * rtp("arena"))
+        payout = int(total * arena["rtp"])
         w = arena["players"][wi]
         arena.update({"phase": "play", "play_at": t, "winner": wi, "payout": payout, "total": total})
         arena["grant"], arena["held"] = give_win(w["id"], payout, f"Арена, банк {total}")
@@ -186,7 +194,7 @@ def arena_state(uid):
            "fly_ms": ARENA_FLY_MS, "show_ms": ARENA_SHOW_MS,
            "players": [{**card(p["id"]), "value": p["value"], "gifts": p["gifts"]} for p in a["players"]], "history": arena_hist[:10]}
     if a["phase"] == "play":
-        out.update({"winner": a["winner"], "seed": a["seed"], "payout": a["payout"], "total": a["total"]})
+        out.update({"winner": a["winner"], "seed": a["seed"], "payout": a["payout"], "total": a["total"], "rtp": a["rtp"]})
         if a["players"][a["winner"]]["id"] == uid:
             out["my_grant"] = a.get("grant")
             out["my_held"] = a.get("held", False)

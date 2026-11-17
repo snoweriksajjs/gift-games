@@ -13,6 +13,7 @@
   let cv, ctx, W = 0, H = 0, raf = 0, active = false;
   let phase = "bet", phaseT = 0, round = null, cp = 1, m = 1, frameN = 0, lastNowId = null;
   let my = null;                            // { bet, cashed }
+  let cashEntry = null;                     // запись истории о выводе: число раунда допишем после взрыва
   let bots = [], stars = [], sparks = [], smoke = [], hist = [];
   let rx = 0, ry = 0;                       // где сейчас ракета
   let rider = null;                         // анимация утки на ракете
@@ -264,6 +265,9 @@
     if (phase !== "bet" || my || !v || sending) return;
     const mb = (A.live && A.live.max_bet) || 100000;
     if (v > mb) return A.toast(`Максимальная ставка ${fmt(mb)} звёзд`);
+    if (v < 10) return A.toast("Минимальная ставка в онлайн-краше 10 звёзд");
+    const auto = Number($("#crashAuto").value) || 0;
+    if (auto >= 1.01 && Math.floor(v * auto) <= v) return A.toast(`Со ставкой ${fmt(v)} автовывод ×${String(auto).replace(".", ",")} не даст прибыли: увеличьте ставку или множитель`);
     sending = true;
     const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
     try {
@@ -291,7 +295,10 @@
     A.busy = false;
     const stats = A.state().stats; stats.bestCrash = Math.max(stats.bestCrash, at); A.save();
     $("#crashBox").classList.add("won");
-    A.log({ mode: "crash", win: true, bet: my.bet, id: null, mult: at, text: `Краш онлайн, забрано на ${xf(at)}. Хеш раунда ${srv.hash.slice(0, 16)}…` });
+    // число раунда сервер раскроет после взрыва: тогда допишем его в эту запись для проверки
+    cashEntry = { mode: "crash", win: true, bet: my.bet, id: null, mult: at, text: `Краш онлайн, забрано на ${xf(at)}`,
+      online: { kind: "crash", round: srv.id, hash: srv.hash } };
+    A.log(cashEntry);
     if (held) A.toast("Крупный выигрыш: придёт после проверки администратором");
     else A.claimGrant(grant);                                // выигрыш выдаёт сервер
     renderPlayers(); renderNow(true); setCta();
@@ -306,9 +313,12 @@
       return { x: rx, y: ry, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1, s: 1.5 + Math.random() * 2.5, life: 1, c: ["#ffd84d", "#ff8a3d", "#ff5b6b", "#fff"][(Math.random() * 4) | 0] };
     });
     A.hap.boom();
+    const proof = { kind: "crash", round: srv.id, hash: srv.hash, seed: srv.seed, rtp: srv.rtp, cp };
+    if (cashEntry && cashEntry.online.round === srv.id) { Object.assign(cashEntry.online, proof); cashEntry.text = `Краш онлайн, точка ${xf(cp)}. Забрано на ${xf(cashEntry.mult)}`; A.save(); }
+    cashEntry = null;
     if (my && !my.cashed) {
       A.busy = false;
-      A.log({ mode: "crash", win: false, bet: my.bet, id: null, mult: 0, text: `Краш онлайн, точка ${xf(cp)}. Ставка не забрана. Число раунда ${srv.seed}` });
+      A.log({ mode: "crash", win: false, bet: my.bet, id: null, mult: 0, text: `Краш онлайн, точка ${xf(cp)}. Ставка не забрана`, online: proof });
       A.showMiss("Ракета взорвалась", `на ${xf(cp)} · −${fmt(my.bet)} ${STAR}`);
     }
     renderHist(); renderPlayers(); renderNow(true); setCta();

@@ -111,6 +111,9 @@
         const want = v * Number(b.dataset.m);
         const best = A.Cat.near(want, v);           // ближайший по цене к ставке × множитель, но дороже ставки
         if (!best) return A.toast("Нет подарка дороже ставки");
+        const real = best.price / v, m = Number(b.dataset.m);
+        // кнопка обещает множитель: если ближайший подарок сильно от него отличается, не подставляем молча другой
+        if (Math.abs(real / m - 1) > 0.15) return A.toast(`Подарка около ×${String(m).replace(".", ",")} нет: ближайший даёт ${xf(real)}. Выберите цель вручную`);
         target = best.id; gotId = null; activeMult = b.dataset.m;
         A.hap.select(); render();
       });

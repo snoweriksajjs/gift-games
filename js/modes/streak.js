@@ -3,9 +3,13 @@
 (() => {
   "use strict";
   const A = window.App, { $, STAR, fmt, fmtS, pct, xf } = A;
-  // Шанс раунда подобран так, чтобы средний возврат был равен HOUSE:
-  // (1 - P) * 2P / (1 - 2P) = HOUSE.
-  const chanceOf = (H) => ((2 + 2 * H) - Math.sqrt((2 + 2 * H) * (2 + 2 * H) - 8 * H)) / 4;
+  // Шанс раунда подбираем так, чтобы средний возврат с учётом потолка в MAX_WINS побед был ровно HOUSE
+  const chanceOf = (H) => {
+    const ev = (P) => { let e = 0; for (let k = 1; k < 10; k++) e += Math.pow(P, k) * (1 - P) * Math.pow(2, k); return e + Math.pow(P, 10) * 1024; };
+    let lo = 0, hi = 0.5;
+    for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (ev(mid) < H) lo = mid; else hi = mid; }
+    return lo;
+  };
   let P = chanceOf(A.rtp("streak"));      // пересчитывается перед каждой серией, если админ поменял шансы
   const MAX_WINS = 10;
   let dial, running = false, wins = 0, bet = 0;
