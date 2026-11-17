@@ -431,6 +431,10 @@ def handle(method, p, uid, body, query, now):
             run("UPDATE users SET rtp=? WHERE id=?", json.dumps(mine) if mine else None, tid)
             log(uid, "rtp", {"user": tid, **mine})
             return {"ok": True, "rtp": mine or None}
+        if a[2:] == ["verify"] and method == "POST":      # выдать или снять галочку
+            run("UPDATE users SET verified=? WHERE id=?", 1 if body.get("on") else None, tid)
+            log(uid, "verify", {"user": tid, "on": bool(body.get("on"))})
+            return {"ok": True}
         if a[2:] == ["ban"] and method == "POST":
             if tid in ADMINS and body.get("on"):
                 raise err(400, "cannot ban admin")

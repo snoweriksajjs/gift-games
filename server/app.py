@@ -41,7 +41,32 @@ GIFT_ID = re.compile(r"^(g\d{1,4}|c\d{1,3}\.\d{1,3}\.\d{1,3})$")   # стары�
 HEX = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 SYM = re.compile(r"^https://cdn\.changes\.tg/[^\"'()\s]{1,200}$")
 HANDLE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{3,23}$")
-MEDIA_NAME = re.compile(r"^[0-9a-f]{20}\.(jpg|mp4)$")
+MEDIA_NAME = re.compile(r"^[0-9a-f]{20}\.(jpg|mp4|mp3|m4a|ogg|wav)$")
+MEDIA_TYPES = {"jpg": "image/jpeg", "mp4": "video/mp4", "mp3": "audio/mpeg", "m4a": "audio/mp4", "ogg": "audio/ogg", "wav": "audio/wav"}
+RAW_MAX = 15_000_000          # музыка и видео для историй
+
+
+def sniff(raw, kind):
+    """Тип файла по первым байтам, а не по имени: сохраняем только то, что действительно аудио, видео или фото."""
+    if raw[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if raw[:3] == b"ID3" or (raw[:1] == b"\xff" and raw[1:2] and raw[1] & 0xE0 == 0xE0):
+        return "mp3"
+    if raw[:4] == b"OggS":
+        return "ogg"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
+        return "wav"
+    if raw[4:8] == b"ftyp":
+        return "m4a" if kind == "audio" else "mp4"
+    return None
+
+
+def clean_media(url, exts):
+    """Ссылка на наш файл нужного типа, иначе пусто."""
+    name = (url or "").rsplit("/", 1)[-1]
+    if not (url or "").startswith(PUBLIC + "/media/") or not MEDIA_NAME.match(name) or name.rsplit(".", 1)[1] not in exts:
+        return ""
+    return url if os.path.exists(os.path.join(MEDIA, name)) else ""
 # текст под реферальным баннером: его видят друзья, которым его переслали
 REF_CAPTION = ("🎁 <b>Залетай в DuckChance</b>\n\n"
                "Тут выбивают NFT-подарки Telegram: Plush Pepe, Durov's Cap, Heart Locket и ещё полсотни коллекций.\n\n"
@@ -151,7 +176,8 @@ def handle_free(h, me_user=None, me_chat=None):
         return False
     u = q1("SELECT id FROM users WHERE handle=? COLLATE NOCASE", h)
     c = q1("SELECT id FROM chats WHERE handle=? COLLATE NOCASE", h)
-    return (not u or u["id"] == me_user) and (not c or c["id"] == me_chat)
+    t = q1("SELECT user FROM tags WHERE tag=? COLLATE NOCASE", h) if "profiles" in globals() else None
+    return (not u or u["id"] == me_user) and (not c or c["id"] == me_chat) and not t
 
 
 def touch_user(u):
@@ -210,6 +236,8 @@ def user_card(uid, full=False):
     if full:
         out["gifts"] = jload(u["gifts"], [])
         out["bio"] = u["bio"] or ""
+    if "profiles" in globals():
+        out.update(profiles.extra(uid, full))
     return out
 
 
@@ -395,6 +423,8 @@ def api(method, path, uid, body, query):
     if r is None:
         r = bank.handle(method, p, uid, body, query, now)  # кошелёк: состояние, раунды, продажа, стейкинг
     if r is None:
+        r = profiles.handle(method, p, uid, body, query, now)   # юзернеймы, галочка, музыка, истории
+    if r is None:
         r = games.handle(method, p, uid, body, query, now)   # онлайн-краш, арена, лента выигрышей
     if r is not None:
         return r
@@ -421,7 +451,8 @@ def api(method, path, uid, body, query):
 
     if p == ["handle"] and method == "GET":
         h = clean(query.get("h", [""])[0], 24).lstrip("@")
-        return {"free": handle_free(h, uid), "valid": bool(HANDLE.match(h))}
+        ok_len = len(h) >= (1 if uid in admin.ADMINS else 5)
+        return {"free": profiles.tag_ok(h, uid), "valid": bool(profiles.TAG.match(h)) and ok_len, "min": 1 if uid in admin.ADMINS else 5}
 
     if p == ["handle"] and method == "POST":
         limit(uid, "handle", 10, 3600)
@@ -429,8 +460,8 @@ def api(method, path, uid, body, query):
         if h == "":
             run("UPDATE users SET handle=NULL WHERE id=?", uid)
             return {"me": user_card(uid, True)}
-        if not handle_free(h, uid):
-            raise HttpError(409, "taken")
+        if not profiles.tag_ok(h, uid) or q1("SELECT 1 x FROM tags WHERE tag=? COLLATE NOCASE AND user=?", h, uid):
+            raise HttpError(409, "taken" if len(h) >= (1 if uid in admin.ADMINS else 5) else "short")
         try:
             run("UPDATE users SET handle=? WHERE id=?", h, uid)
         except sqlite3.IntegrityError:
@@ -439,7 +470,7 @@ def api(method, path, uid, body, query):
 
     if p == ["resolve"] and method == "GET":
         h = clean(query.get("h", [""])[0], 24).lstrip("@")
-        u = q1("SELECT id FROM users WHERE handle=? COLLATE NOCASE", h)
+        u = q1("SELECT id FROM users WHERE handle=? COLLATE NOCASE", h) or q1("SELECT user AS id FROM tags WHERE tag=? COLLATE NOCASE", h)
         if u:
             return {"user": user_card(u["id"], True)}
         c = q1("SELECT * FROM chats WHERE handle=? COLLATE NOCASE", h)
@@ -816,6 +847,8 @@ admin.bind(globals())
 import catalog
 import bank                      # кошелёк игрока: server/bank.py
 bank.bind(globals())
+import profiles                  # профиль как в Telegram: server/profiles.py
+profiles.bind(globals())
 import games                     # онлайн-игры: server/games.py
 games.bind(globals())
 
@@ -856,8 +889,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404, {"error": "not found"})
         with open(path, "rb") as f:
             data = f.read()
-        self.send_response(200)
-        self.send_header("Content-Type", "video/mp4" if name.endswith(".mp4") else "image/jpeg")
+        rng = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range") or "")
+        total = len(data)
+        if rng and (rng.group(1) or rng.group(2)):
+            a = int(rng.group(1)) if rng.group(1) else max(0, total - int(rng.group(2)))
+            b = int(rng.group(2)) if rng.group(1) and rng.group(2) else total - 1
+            b = min(b, total - 1)
+            data = data[a:b + 1]
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {a}-{b}/{total}")
+        else:
+            self.send_response(200)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Type", MEDIA_TYPES[name.rsplit(".", 1)[1]])
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -882,6 +926,22 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise HttpError(401, "no auth")
             body = {}
+            if method == "POST" and url.path == "/api/media/raw":
+                n = int(self.headers.get("Content-Length") or 0)
+                if not 0 < n <= RAW_MAX:
+                    raise HttpError(413, "too big")
+                limit(uid, "raw", 30, 3600)
+                raw = self.rfile.read(n)
+                kind = urllib.parse.parse_qs(url.query).get("kind", ["audio"])[0]
+                ext = sniff(raw, kind)
+                if not ext or (kind == "audio" and ext not in ("mp3", "m4a", "ogg", "wav")) or (kind == "story" and ext not in ("jpg", "mp4")):
+                    raise HttpError(415, "bad file")
+                name = hashlib.sha256(raw).hexdigest()[:20] + "." + ext
+                path = os.path.join(MEDIA, name)
+                if not os.path.exists(path):
+                    with open(path, "wb") as f:
+                        f.write(raw)
+                return self.reply(200, {"url": f"{PUBLIC}/media/{name}"})
             if method == "POST":
                 n = int(self.headers.get("Content-Length") or 0)
                 big = url.path in ("/api/upload",) or url.path.endswith("/share")

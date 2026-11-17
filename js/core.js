@@ -1328,6 +1328,7 @@
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,
     Fair, sha256, hex, enc, nextRound, Dial, confetti, PARTY, toast,
     openSheet, closeSheet, get sheet() { return sheetEl; },
+    bindSheet: (el) => el.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => closeSheet())),
     stake, stakeValue, takeStake, stakeChips, renderStake, renderBalance,
     applyServer, stakeBody, spendLocal, moneyErr, money, mskDay,
     showPrize, showMiss, log, logShow, renderFeed, renderTasks, renderProfile, openGift, setCta,

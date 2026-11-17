@@ -146,6 +146,7 @@
       <section class="list adm-form"><textarea id="auMsg" rows="3" placeholder="Текст, можно с HTML-разметкой"></textarea><div class="adm-btns"><button data-act="msg">Отправить</button></div></section>
       ${gifts.length ? `<h4 class="adm-h">Подарки</h4><div class="adm-gifts">${gifts.map((g) => `<span class="adm-gift" style="${A.bg(byId[g])}"><i class="pat"></i>${A.pic(byId[g])}</span>`).join("")}</div>` : ""}
       ${u.grants.length ? `<h4 class="adm-h">Выдачи</h4><section class="list">${u.grants.map((g) => `<div class="row adm-line"><span class="grow">${g.kind === "gift" && byId[g.gift] ? esc(byId[g.gift].gift) : g.kind === "set" ? "Баланс = " + fmt(g.amount) : (g.amount > 0 ? "+" : "") + fmt(g.amount)}${g.wager ? ` · ×${g.wager}` : ""}</span><span class="hint">${g.hold ? "на проверке" : g.claimed ? "получено" : "ждёт"}</span></div>`).join("")}</section>` : ""}
+      <section class="list"><button class="row pn-row" data-act="verify">${u.verified ? "Снять галочку" : "Выдать галочку"}</button></section>
       <section class="list"><button class="row pn-row ${u.banned ? "" : "danger"}" data-act="ban">${u.banned ? "Разблокировать" : "Заблокировать игрока"}</button></section>`;
     body().onclick = async (e) => {
       const c = e.target.closest("[data-copy]"); if (c) { navigator.clipboard && navigator.clipboard.writeText(c.dataset.copy); return toast("ID скопирован"); }
@@ -168,6 +169,7 @@
           toast(allv != null || Object.keys(modes).length ? "Шансы игрока сохранены" : "Шансы как у всех");
         }
         if (a === "rtpreset") { await api("POST", `/api/admin/user/${id}/rtp`, { reset: true }); toast("Шансы как у всех"); }
+        if (a === "verify") { await api("POST", `/api/admin/user/${id}/verify`, { on: !u.verified }); toast(u.verified ? "Галочка снята" : "Галочка выдана"); }
         if (a === "ban") { if (!u.banned && !confirm(`Заблокировать ${u.name}?`)) return; await api("POST", `/api/admin/user/${id}/ban`, { on: !u.banned }); toast(u.banned ? "Разблокирован" : "Заблокирован"); }
         hap.win(); userCard(id);
       } catch (er) { fail(er); }

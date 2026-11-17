@@ -115,7 +115,8 @@
     return `<span class="ava ${cls} ${photo ? "" : "tint"}" style="--h:${hue(c.id + 7)};${photo ? `background-image:url('${photo}')` : ""}">${photo ? "" : esc(c.title.trim().charAt(0).toUpperCase())}</span>`;
   }
   const giftMark = (look) => { const g = look && look.gift && byId[look.gift]; return g ? `<img class="nm-gift" src="${g.img}" alt="">` : ""; };
-  const chatName = (c) => c.kind === "dm" ? esc(c.peer.name) + giftMark(c.peer.look) : esc(c.title);
+  const vm = (u) => (A.verMark ? A.verMark(u) : "");      // галочка рядом с именем
+  const chatName = (c) => c.kind === "dm" ? esc(c.peer.name) + vm(c.peer) + giftMark(c.peer.look) : esc(c.title);
 
   // обложка как у профиля в Telegram: цвет фона подарка и символы кольцами вокруг аватарки
   const RINGS = [[58, 7, 0.55, 20], [90, 11, 0.38, 18], [124, 15, 0.24, 17], [160, 19, 0.13, 15], [198, 23, 0.06, 14]];
@@ -213,7 +214,7 @@
 
   // поиск людей, групп и каналов
   let searchT = null, searchSeq = 0, found = {};
-  const userRow = (u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${giftMark(u.look)}</b></span><span class="ch-l2"><span class="ch-prev">${esc(at(u) || seenText(u))}</span></span></span></button>`;
+  const userRow = (u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${vm(u)}${giftMark(u.look)}</b></span><span class="ch-l2"><span class="ch-prev">${esc(at(u) || seenText(u))}</span></span></span></button>`;
   async function search(qs) {
     const box = $("#chFound"), seq = ++searchSeq;
     if (qs.length < 2) { box.hidden = true; $("#chList").hidden = false; return; }
@@ -360,7 +361,7 @@
     const r = roles[m.user.id];
     const role = r ? (r.title || (r.role === "owner" ? "владелец" : r.role === "admin" ? "админ" : "")) : "";
     const name = isChannel ? (first ? `<span class="m-name ch">${esc(cur.title)}</span>` : "")
-      : first && !mine && cur.kind === "group" ? `<span class="m-name" data-user="${m.user.id}" style="--h:${hue(m.user.id)}"><span>${esc(m.user.name)}</span>${giftMark(m.user.look)}${role ? `<i class="m-role">${esc(role)}</i>` : ""}</span>` : "";
+      : first && !mine && cur.kind === "group" ? `<span class="m-name" data-user="${m.user.id}" style="--h:${hue(m.user.id)}"><span>${esc(m.user.name)}</span>${vm(m.user)}${giftMark(m.user.look)}${role ? `<i class="m-role">${esc(role)}</i>` : ""}</span>` : "";
     const q = m.reply && msgs.find((x) => x.id === m.reply && x.kind !== "deleted");
     const qg = q && !isChannel && styleOf(q.user.look);
     const quote = q ? `<span class="m-quote ${qg ? "styled" : ""}" data-goto="${q.id}" style="${qg ? vars(qg) : `--h:${hue(q.user.id)}`}"><b>${esc(isChannel ? cur.title : q.user.name)}</b><span>${q.kind === "photo" ? "Фото" : q.gift ? "Подарок" : esc(q.text.slice(0, 90))}</span></span>` : "";
@@ -665,22 +666,28 @@
   // профиль игрока
   function userScreen(u0) {
     return (el) => {
-      let u = u0;
+      let u = u0, ptab = "gifts";
       const paint = () => {
         const g = styleOf(u.look), mine = u.id === myId;
         const gifts = (u.gifts || []).filter((id) => byId[id]);
-        el.innerHTML = `${cover(u.look, u.id, `${ava(u, "xl")}<h2>${esc(u.name)}${giftMark(u.look)}</h2><p class="${Date.now() / 1000 - u.seen < 120 ? "online" : ""}">${esc(seenText(u))}</p>`)}
+        const R = A.profileAva ? A : null;   // профиль как в Telegram (js/profile.js)
+        el.innerHTML = `${cover(u.look, u.id, `${R ? R.profileAva(u, ava(u, "xl")) : ava(u, "xl")}<h2>${esc(u.name)}${vm(u)}${giftMark(u.look)}</h2><p class="${Date.now() / 1000 - u.seen < 120 ? "online" : ""}">${esc(seenText(u))}</p>`)}
+          ${R ? `<div class="pr-wrap">${R.musicHtml(u.music)}</div>` : ""}
           ${mine ? "" : `<div class="pn-acts">${actBtn("dm", "Сообщение", "dm")}${actBtn("gift", "Подарок", "gift")}${u.handle ? actBtn("copy", "Ссылка", "link") : ""}</div>`}
-          ${u.handle || u.bio || g ? `<section class="list pn-info">
-            ${u.handle ? `<button class="pn-line" data-act="copy"><b>@${esc(u.handle)}</b><span>имя пользователя</span></button>` : ""}
+          ${R ? `<div class="pr-wrap">${R.profileInfo(u)}</div>` : ""}
+          ${u.bio || g ? `<section class="list pn-info">
             ${u.bio ? `<div class="pn-line"><b class="pre">${esc(u.bio)}</b><span>о себе</span></div>` : ""}
             ${g ? `<div class="pn-line"><b>${esc(g.gift)} ✦</b><span>особый стиль коллекции</span></div>` : ""}
           </section>` : ""}
-          ${gifts.length ? `<h4 class="sec-title">Подарки · ${gifts.length}</h4><div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}</button>`).join("")}</div>` : ""}
+          <div class="seg flush pr-tabs"><button data-ptab="gifts" class="${ptab === "gifts" ? "on" : ""}">Подарки${gifts.length ? " · " + gifts.length : ""}</button><button data-ptab="stories" class="${ptab === "stories" ? "on" : ""}">Истории${u.stories ? " · " + u.stories : ""}</button></div>
+          ${ptab === "gifts" ? (gifts.length ? `<div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}</button>`).join("")}</div>` : `<p class="pn-note">Подарков пока нет</p>`)
+            : `<div class="pr-st-box"></div>`}
           ${mine ? "" : `<section class="list"><button class="row pn-row ${u.blocked ? "" : "danger"}" data-act="block">${u.blocked ? "Разблокировать" : "Заблокировать"}</button></section>
           <p class="pn-note">${u.blocked ? "Игрок не может писать вам в личку и дарить подарки." : "Заблокированный игрок не сможет писать вам в личку и дарить подарки."}</p>`}`;
       };
       el.onclick = async (e) => {
+        const tb = e.target.closest("[data-ptab]");
+        if (tb) { ptab = tb.dataset.ptab; paint(); if (ptab === "stories" && A.storiesGrid) A.storiesGrid(u.id, el.querySelector(".pr-st-box")); return; }
         const b = e.target.closest("[data-act]"), gb = e.target.closest("[data-g]");
         if (gb) return A.openGift(byId[gb.dataset.g], null);
         if (!b) return;
@@ -720,7 +727,7 @@
             ${c.owner_card ? `<button class="pn-line" data-user="${c.owner_card.id}"><b>${esc(c.owner_card.name)}${c.owner_card.handle ? ` <i class="hint">@${esc(c.owner_card.handle)}</i>` : ""}</b><span>владелец</span></button>` : ""}
           </section>
           ${showMembers && list.length ? `<h4 class="sec-title">${c.kind === "channel" ? "Подписчики" : "Участники"} · ${list.length}</h4>
-            <section class="list ch-list">${list.map((u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${giftMark(u.look)}</b>${u.title || role[u.role] ? `<i class="m-role">${esc(u.title || role[u.role])}</i>` : ""}</span><span class="ch-l2"><span class="ch-prev ${Date.now() / 1000 - u.seen < 120 ? "online" : ""}">${esc(seenText(u))}</span></span></span></button>`).join("")}</section>` : ""}`;
+            <section class="list ch-list">${list.map((u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${vm(u)}${giftMark(u.look)}</b>${u.title || role[u.role] ? `<i class="m-role">${esc(u.title || role[u.role])}</i>` : ""}</span><span class="ch-l2"><span class="ch-prev ${Date.now() / 1000 - u.seen < 120 ? "online" : ""}">${esc(seenText(u))}</span></span></span></button>`).join("")}</section>` : ""}`;
       };
       el.onchange = async (e) => {
         if (!e.target.matches("[data-mute]")) return;
@@ -971,7 +978,7 @@
       const rights = isAdmin ? { ...u.rights } : { info: true, post: true, delete: true, ban: true, invite: true, pin: true, promote: false };
       let title = u.title || "";
       const keys = Object.keys(RIGHT_LABELS).filter((k) => k !== "post" || c.kind === "channel");
-      el.innerHTML = `<div class="pn-who">${ava(u, "lg")}<b>${esc(u.name)}${giftMark(u.look)}</b><span>${esc(at(u) || seenText(u))}</span></div>
+      el.innerHTML = `<div class="pn-who">${ava(u, "lg")}<b>${esc(u.name)}${vm(u)}${giftMark(u.look)}</b><span>${esc(at(u) || seenText(u))}</span></div>
         <h4 class="sec-title">Префикс</h4><section class="list st-form"><input class="st-in" data-f="title" maxlength="16" placeholder="админ" value="${esc(title)}"></section>
         <p class="pn-note">Виден рядом с именем в сообщениях вместо слова «админ».</p>
         <h4 class="sec-title">Что может этот администратор</h4>
@@ -1017,7 +1024,7 @@
       const load = () => call("GET", `/api/chat/${c.id}/members`).then((r) => {
         if (!el.isConnected) return;
         const list = banned ? r.banned : r.members;
-        el.innerHTML = list.length ? `<section class="list ch-list">${list.map((u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${giftMark(u.look)}</b>${u.title || role[u.role] ? `<i class="m-role">${esc(u.title || role[u.role])}</i>` : ""}</span><span class="ch-l2"><span class="ch-prev">${esc(at(u) || seenText(u))}</span></span></span></button>`).join("")}</section>`
+        el.innerHTML = list.length ? `<section class="list ch-list">${list.map((u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${vm(u)}${giftMark(u.look)}</b>${u.title || role[u.role] ? `<i class="m-role">${esc(u.title || role[u.role])}</i>` : ""}</span><span class="ch-l2"><span class="ch-prev">${esc(at(u) || seenText(u))}</span></span></span></button>`).join("")}</section>`
           : `<div class="ch-empty">${banned ? "Никто не заблокирован" : "Пока никого"}</div>`;
         el.onclick = (e) => {
           const b = e.target.closest("[data-user]"); if (!b) return;
@@ -1269,7 +1276,18 @@
   // ---------- связь с ядром ----------
   A.styleOf = styleOf;
   A.SPECIAL = SPECIAL;
-  A.onProfile = renderStakes;
+  A.onProfile = () => { renderStakes(); if (A.paintMyProfile) A.paintMyProfile(); };
+  A.openChat = (id) => { closeSheet(); return openChat(id); };
+  // загрузка файла целиком (музыка, видео и фото для историй)
+  A.rawUpload = async (blob, kind) => {
+    const headers = { "X-App-Ver": "40" };
+    if (inTg) headers.Authorization = "tma " + tg.initData;
+    else headers["X-Dev-User"] = `${devId}:${encodeURIComponent("Тест " + (devId - 1000))}`;
+    const r = await fetch(`${API}/api/media/raw?kind=${kind}`, { method: "POST", headers, body: blob });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error || "error"), { status: r.status });
+    return j;
+  };
   let lookT = null, sent = "";
   const giftIds = () => [...st().inv].sort((a, b) => byId[b.id].price - byId[a.id].price).map((x) => x.id).slice(0, 60);
   function syncMe(force) {
