@@ -116,7 +116,7 @@ def add_column(table, col, decl):
 # новые поля поверх первой версии базы
 for t, c, d in [("users", "created", "INTEGER"), ("users", "balance", "INTEGER"), ("users", "staked", "INTEGER"), ("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
                 ("chats", "photo", "TEXT"), ("chats", "look", "TEXT"), ("chats", "handle", "TEXT"),
-                ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"), ("chats", "private", "INTEGER"),
+                ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"), ("chats", "private", "INTEGER"), ("chats", "verified", "INTEGER"), ("chats", "check_style", "TEXT"),
                 ("members", "title", "TEXT"), ("members", "muted", "INTEGER"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
                 ("transfers", "inv", "INTEGER"), ("messages", "kind", "TEXT DEFAULT 'text'"), ("messages", "data", "TEXT"), ("messages", "deleted", "INTEGER")]:
     add_column(t, c, d)
@@ -309,6 +309,7 @@ def chat_out(c, uid, full=False):
            "photo": c["photo"] or "", "look": jload(c["look"]), "handle": c["handle"] or "",
            "role": me["role"] if me else None, "my_title": me["title"] if me else "",
            "private": bool(c["private"]), "muted": bool(me and me.get("muted")),
+           "verified": bool(c["verified"]), "check": (c["check_style"] or "classic") if c["verified"] else None,
            "members": q1("SELECT COUNT(*) n FROM members WHERE chat=?", c["id"])["n"],
            "last": msg_out(last, {}) if last else None,
            "unread": q1("SELECT COUNT(*) n FROM messages WHERE chat=? AND id>? AND user<>?", c["id"], me["read_id"], uid)["n"] if me else 0}
@@ -447,6 +448,7 @@ def api(method, path, uid, body, query):
             run(f"UPDATE users SET {k}=? WHERE id=?", v, uid)
         pending = q1("SELECT COUNT(*) n FROM transfers WHERE to_user=? AND claimed IS NULL", uid)["n"]
         grants = q1("SELECT COUNT(*) n FROM grants WHERE user=? AND claimed IS NULL AND hold IS NULL", uid)["n"]
+        profiles.tg_music_soon(uid)      # песни из профиля Telegram подтянем в фоне
         return {"me": user_card(uid, True), "pending": pending, "grants": grants, "admin": uid in admin.ADMINS}
 
     if p == ["handle"] and method == "GET":
@@ -611,6 +613,33 @@ def api(method, path, uid, body, query):
                     raise HttpError(400, "empty")
                 mid = post_message(cid, uid, text, None, reply)
             return msg_out(q1("SELECT * FROM messages WHERE id=?", mid), {})
+
+        if sub == "verify" and method == "POST":       # галочка группы или канала: владелец покупает, админ выдаёт и снимает
+            if c["kind"] == "dm":
+                raise HttpError(400, "not a chat")
+            if body.get("admin"):
+                if uid not in admin.ADMINS:
+                    raise HttpError(403, "admins only")
+                run("UPDATE chats SET verified=? WHERE id=?", 1 if body.get("on") else None, cid)
+                return chat_out(chat_or_404(cid), uid, True)
+            if not me or me["role"] != "owner":
+                raise HttpError(403, "owner only")
+            if c["verified"]:
+                raise HttpError(409, "already verified")
+            with bank.tx():
+                bank.need(uid)
+                bank.move(uid, -profiles.CHECK_PRICE, f"галочка чата {cid}")
+                db.execute("UPDATE chats SET verified=1 WHERE id=?", (cid,))
+                st = bank.state(uid)
+            return chat_out(chat_or_404(cid), uid, True) | {"state": st}
+
+        if sub == "check" and method == "POST":        # дизайн галочки чата
+            if not me or me["role"] != "owner" or not c["verified"]:
+                raise HttpError(403, "owner only")
+            if body.get("check") not in profiles.CHECKS:
+                raise HttpError(400, "bad check")
+            run("UPDATE chats SET check_style=? WHERE id=?", body["check"], cid)
+            return chat_out(chat_or_404(cid), uid, True)
 
         if sub == "mute" and method == "POST":         # без звука: бот не присылает уведомления из этого чата
             if not me:

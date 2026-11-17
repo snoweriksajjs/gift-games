@@ -53,19 +53,113 @@
   A.FRAMES = FRAMES;
   A.profileAva = (u, avaHtml) => `<button class="pr-ava ${A.storyRing(u)} ${u.frame && FRAMES[u.frame] ? "framed" : ""}" data-stories="${u.id}" aria-label="Истории">${u.frame && FRAMES[u.frame] ? `<img class="pr-frame" src="${FRAMES[u.frame].src}" alt="">` : ""}${avaHtml}${A.orbitHtml(u.orbit)}</button>`;
 
-  // ---------- музыка в профиле ----------
+  // ---------- музыка: плеер внутри приложения (как в Telegram) ----------
   const audio = new Audio();
-  audio.preload = "none";
-  let playing = "";
-  audio.addEventListener("ended", () => { playing = ""; paintMusic(); });
-  function paintMusic() { document.querySelectorAll("[data-music]").forEach((b) => b.classList.toggle("on", b.dataset.music === playing && !audio.paused)); }
-  A.toggleMusic = (url) => {
-    if (playing === url && !audio.paused) { audio.pause(); return paintMusic(); }
-    if (playing !== url) { audio.src = url; playing = url; }
-    audio.play().then(paintMusic, () => A.toast("Не получилось включить музыку"));
+  audio.preload = "metadata";
+  audio.setAttribute("playsinline", "");
+  let queue = [], qi = 0, qOwner = "", sheetEl = null, barEl = null;
+  const cur = () => queue[qi] || null;
+  const tsec = (x) => { x = Math.max(0, Math.floor(x || 0)); return `${Math.floor(x / 60)}:${String(x % 60).padStart(2, "0")}`; };
+  const NOTE = `<svg viewBox="0 0 24 24"><path d="M3 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/><path d="M13 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/><path d="M9 17v-13h10v13"/><path d="M9 8h10"/></svg>`;
+  const IC_PLAY = `<svg viewBox="0 0 24 24"><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>`;
+  const IC_PAUSE = `<svg viewBox="0 0 24 24"><path d="M9 4h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h2a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2z"/><path d="M17 4h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h2a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2z"/></svg>`;
+  const IC_PREV = `<svg viewBox="0 0 24 24"><path d="M19.496 4.136l-12 7a1 1 0 0 0 0 1.728l12 7a1 1 0 0 0 1.504 -.864v-14a1 1 0 0 0 -1.504 -.864z"/><path d="M4 4a1 1 0 0 1 .993 .883l.007 .117v14a1 1 0 0 1 -1.993 .117l-.007 -.117v-14a1 1 0 0 1 1 -1z"/></svg>`;
+  const IC_NEXT = `<svg viewBox="0 0 24 24"><path d="M3 5v14a1 1 0 0 0 1.504 .864l12 -7a1 1 0 0 0 0 -1.728l-12 -7a1 1 0 0 0 -1.504 .864z"/><path d="M20 4a1 1 0 0 1 .993 .883l.007 .117v14a1 1 0 0 1 -1.993 .117l-.007 -.117v-14a1 1 0 0 1 1 -1z"/></svg>`;
+  const coverHtml = (t, cls) => t && t.cover ? `<img class="${cls}" src="${esc(t.cover)}" alt="">` : `<span class="${cls} mp-nocover">${NOTE}</span>`;
+  function paintMusic() {
+    const t = cur(), on = !!t && !audio.paused;
+    document.querySelectorAll("[data-music], [data-play]").forEach((b) => b.classList.toggle("on", !!t && on && (b.dataset.music ? b.dataset.music === t.url : b.dataset.playUrl === t.url)));
+    if (barEl) {
+      barEl.hidden = !t;
+      document.body.classList.toggle("has-mbar", !!t);
+      if (t) {
+        barEl.querySelector(".mb-pp").innerHTML = on ? IC_PAUSE : IC_PLAY;
+        barEl.querySelector(".mb-t").innerHTML = `<b>${esc(t.title)}</b>${t.performer ? `<span>${esc(t.performer)}</span>` : ""}`;
+        barEl.querySelector(".mb-p").style.width = (audio.duration ? (audio.currentTime / audio.duration) * 100 : 0) + "%";
+      }
+    }
+    if (sheetEl && !sheetEl.hidden && t) {
+      sheetEl.querySelector(".mp-pp").innerHTML = on ? IC_PAUSE : IC_PLAY;
+      const seek = sheetEl.querySelector(".mp-seek");
+      if (!seek.dragging) seek.value = audio.duration ? Math.round((audio.currentTime / audio.duration) * 1000) : 0;
+      sheetEl.querySelector(".mp-a").textContent = tsec(audio.currentTime);
+      sheetEl.querySelector(".mp-b").textContent = audio.duration && isFinite(audio.duration) ? "-" + tsec(audio.duration - audio.currentTime) : (t.duration ? tsec(t.duration) : "");
+    }
+  }
+  function mediaSession() {
+    const t = cur(); if (!t || !("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.performer || qOwner, album: "DuckChance", artwork: t.cover ? [{ src: t.cover, sizes: "320x320", type: "image/jpeg" }] : [] });
+      navigator.mediaSession.setActionHandler("play", () => play());
+      navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+      navigator.mediaSession.setActionHandler("previoustrack", () => step(-1));
+      navigator.mediaSession.setActionHandler("nexttrack", () => step(1));
+    } catch {}
+  }
+  function load(i) { qi = ((i % queue.length) + queue.length) % queue.length; audio.src = cur().url; mediaSession(); paintSheet(); }
+  function play() { const p = audio.play(); if (p) p.then(paintMusic, () => A.toast("Не получилось включить музыку")); paintMusic(); }
+  function step(d) { if (!queue.length) return; load(qi + d); play(); }
+  ["play", "pause", "timeupdate", "loadedmetadata", "durationchange"].forEach((ev) => audio.addEventListener(ev, paintMusic));
+  audio.addEventListener("ended", () => { if (queue.length > 1) step(1); else { audio.currentTime = 0; paintMusic(); } });
+  audio.addEventListener("error", () => { if (cur()) A.toast("Песня не загрузилась"); });
+  // мини-плеер сверху, пока играет музыка
+  function buildBar() {
+    barEl = document.createElement("div");
+    barEl.className = "mbar"; barEl.hidden = true;
+    barEl.innerHTML = `<button class="mb-pp" aria-label="Пауза">${IC_PLAY}</button><button class="mb-t"></button><button class="mb-x" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg></button><i class="mb-p"></i>`;
+    document.body.appendChild(barEl);
+    barEl.querySelector(".mb-pp").onclick = () => (audio.paused ? play() : audio.pause());
+    barEl.querySelector(".mb-t").onclick = () => openPlayer();
+    barEl.querySelector(".mb-x").onclick = () => { audio.pause(); audio.removeAttribute("src"); audio.load(); queue = []; paintMusic(); };
+  }
+  // большой плеер: обложка, перемотка, кнопки, список песен
+  function paintSheet() {
+    if (!sheetEl) return;
+    const t = cur(); if (!t) return;
+    sheetEl.querySelector(".mp-cover").innerHTML = coverHtml(t, "mp-img");
+    sheetEl.querySelector(".mp-title").innerHTML = `<b>${esc(t.title)}</b><span>${esc([t.performer, qOwner].filter(Boolean).join(" · "))}</span>`;
+    sheetEl.querySelector(".mp-list").innerHTML = queue.length > 1 ? queue.map((x, k) => `<button class="mp-row ${k === qi ? "on" : ""}" data-k="${k}">${coverHtml(x, "mp-thumb")}<span><b>${esc(x.title)}</b><i>${esc(x.performer || "")}</i></span><em>${x.duration ? tsec(x.duration) : ""}</em></button>`).join("") : "";
+    sheetEl.querySelectorAll(".mp-ctl .mp-prev, .mp-ctl .mp-next").forEach((b) => (b.disabled = queue.length < 2));
     paintMusic();
+  }
+  function openPlayer() {
+    if (!cur()) return;
+    if (!sheetEl) {
+      sheetEl = document.createElement("section");
+      sheetEl.className = "sheet"; sheetEl.id = "musicSheet"; sheetEl.hidden = true;
+      sheetEl.setAttribute("role", "dialog"); sheetEl.setAttribute("aria-label", "Музыка");
+      sheetEl.innerHTML = `<div class="grab"></div><header class="sheet-head"><h3>Музыка</h3><button class="sheet-x" data-close>Закрыть</button></header>
+        <div class="sheet-body mp"><div class="mp-cover"></div><div class="mp-title"></div>
+          <div class="mp-time"><input class="mp-seek" type="range" min="0" max="1000" value="0" aria-label="Перемотка"><div><span class="mp-a">0:00</span><span class="mp-b"></span></div></div>
+          <div class="mp-ctl"><button class="mp-prev" aria-label="Назад">${IC_PREV}</button><button class="mp-pp" aria-label="Играть">${IC_PLAY}</button><button class="mp-next" aria-label="Дальше">${IC_NEXT}</button></div>
+          <div class="mp-list"></div></div>`;
+      document.body.appendChild(sheetEl);
+      if (A.bindSheet) A.bindSheet(sheetEl);
+      const seek = sheetEl.querySelector(".mp-seek");
+      seek.addEventListener("input", () => { seek.dragging = true; if (audio.duration) sheetEl.querySelector(".mp-a").textContent = tsec((seek.value / 1000) * audio.duration); });
+      seek.addEventListener("change", () => { seek.dragging = false; if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration; });
+      sheetEl.querySelector(".mp-pp").onclick = () => (audio.paused ? play() : audio.pause());
+      sheetEl.querySelector(".mp-prev").onclick = () => step(-1);
+      sheetEl.querySelector(".mp-next").onclick = () => step(1);
+      sheetEl.querySelector(".mp-list").onclick = (e) => { const r = e.target.closest("[data-k]"); if (r) { load(Number(r.dataset.k)); play(); } };
+    }
+    paintSheet();
+    A.openSheet(sheetEl);
+  }
+  // включить список песен (профиль игрока или песни из Telegram в настройках)
+  A.playList = (list, start = 0, owner = "") => {
+    list = (list || []).filter((t) => t && t.url);
+    if (!list.length) return;
+    if (!barEl) buildBar();
+    const same = cur() && list[start] && cur().url === list[start].url;
+    queue = list; qOwner = owner;
+    if (!same) load(start); else { qi = start; paintSheet(); }
+    play();
+    openPlayer();
   };
-  A.musicHtml = (m) => (m ? `<button class="pr-music ${playing === m.url && !audio.paused ? "on" : ""}" data-music="${esc(m.url)}"><i class="pm-ic"></i><span>${esc(m.title)}</span><b class="pm-eq"><i></i><i></i><i></i></b></button>` : "");
+  A.toggleMusic = (url) => A.playList([{ url, title: "Музыка" }], 0);
+  A.musicOf = {};
+  A.musicHtml = (m) => (m ? `<button class="pr-music" data-music="${esc(m.url)}"><i class="pm-ic"></i><span>${esc(m.title)}</span><b class="pm-eq"><i></i><i></i><i></i></b></button>` : "");
 
   // блок под шапкой профиля: канал, юзернеймы, галочка
   A.profileInfo = (u) => {
@@ -81,7 +175,9 @@
 
   // клики по профилю: музыка, канал, юзернейм, истории
   document.addEventListener("click", (e) => {
-    const m = e.target.closest("[data-music]"); if (m) { e.stopPropagation(); return A.toggleMusic(m.dataset.music); }
+    const pl = e.target.closest("[data-play]");
+    if (pl) { e.stopPropagation(); const r = A.musicOf[pl.dataset.play]; if (r) A.playList(r.list, r.start, r.owner); return; }
+    const m = e.target.closest("[data-music]"); if (m) { e.stopPropagation(); return A.playList([{ url: m.dataset.music, title: m.textContent.trim() || "Музыка" }], 0); }
     const c = e.target.closest("[data-chan]"); if (c && A.openChat) { e.stopPropagation(); return A.openChat(Number(c.dataset.chan)); }
     const t = e.target.closest(".pr-tag[data-copy], .tgp [data-copy]");
     if (t) { e.stopPropagation(); try { navigator.clipboard.writeText(t.dataset.copy); } catch {} return A.toast("Скопировано: " + t.dataset.copy); }
@@ -197,7 +293,12 @@
   };
 
   // ---------- редактор своего профиля ----------
-  let ed = null;
+  let ed = null, bioT = 0;
+  const ownLook = () => {
+    const banner = $("#pfBanner"), av = banner && banner.querySelector(".ava.xl");
+    return { look: A.bannerLook ? A.bannerLook() : {}, avaHtml: av ? av.outerHTML.replace(/\sdata-ava(="[^"]*")?/, "") : "" };
+  };
+  const chev = `<svg class="pe-chev" viewBox="0 0 24 24"><path d="M9 6l6 6l-6 6"/></svg>`;
   async function openEditor() {
     if (!A.api || !A.apiReady || !A.apiReady()) return A.toast("Редактирование профиля работает внутри Telegram");
     let me, chans = [];
@@ -207,55 +308,97 @@
       ed = document.createElement("section");
       ed.className = "sheet tall"; ed.id = "profSheet"; ed.hidden = true;
       ed.setAttribute("role", "dialog"); ed.setAttribute("aria-label", "Профиль");
-      ed.innerHTML = `<div class="grab"></div><header class="sheet-head"><h3>Профиль</h3><button class="sheet-x" data-close>Готово</button></header><div class="sheet-body" id="peBody"></div>`;
+      ed.innerHTML = `<div class="grab"></div><header class="sheet-head"><h3>Изменить профиль</h3><button class="sheet-x" data-close>Готово</button></header><div class="sheet-body pe" id="peBody"></div>`;
       document.body.appendChild(ed);
       if (A.bindSheet) A.bindSheet(ed);
     }
     const st = A.state();
     const gifts = [...new Set(st.inv.map((it) => it.id))].filter((g) => A.byId[g]).sort((a, b) => A.byId[b].price - A.byId[a].price).slice(0, 60);
     let orbit = [...(me.orbit || [])];
-    const tagsCount = (me.handle ? 1 : 0) + (me.tags || []).length;
+    const tracks = me.tg_music || [];
     const paint = () => {
-      const NC = A.NAME_COLORS || {};
+      const NC = A.NAME_COLORS || {}, own = ownLook(), l = own.look || {};
+      const tagsCount = (me.handle ? 1 : 0) + (me.tags || []).length;
+      const lookStyle = l.c1 ? `--c1:${l.c1};--c2:${l.c2};--cp:${l.cp || l.c2}` + (l.sym ? `;--sym:url('${l.sym}')` : "") : "";
+      const mus = me.music;
       $("#peBody").innerHTML = `
-        <h4 class="sec-title">Оформление</h4>
-        <section class="list"><button class="row pn-row" data-look-open><span class="grow">Цвет и узор фона профиля</span><span class="hint">›</span></button></section>
-        <h4 class="sec-title">Цвет ника</h4>
-        <div class="pe-colors">
-          <button class="pe-color none ${!me.name_color ? "on" : ""}" data-nc="" aria-label="Обычный">Aa</button>
-          ${Object.entries(NC).map(([k, v]) => { const grad = v.startsWith("linear"); return `<button class="pe-color ${me.name_color === k ? "on" : ""} ${grad && !me.verified ? "lock" : ""}" data-nc="${k}" style="background:${v}" aria-label="${k}">${grad && !me.verified ? "🔒" : ""}</button>`; }).join("")}
+        <div class="pe-prev tgp" style="${lookStyle}">
+          <div class="pe-prev-c">${A.profileAva({ ...me, orbit }, own.avaHtml)}</div>
+          <div class="tgp-name"><span class="tgp-nm ${me.name_color ? "glow" : ""}" style="${nameStyle(me.name_color)}">${esc(me.name)}</span>${A.verMark(me)}</div>
         </div>
-        <p class="pn-note">Градиенты доступны с галочкой.</p>
-        <h4 class="sec-title">Описание</h4>
-        <div class="pe-add"><textarea id="peBio" maxlength="140" rows="2" placeholder="Пара слов о себе">${esc(me.bio || "")}</textarea></div>
-        <button class="mini-btn" data-bio-save>Сохранить описание</button>
-        <h4 class="sec-title">Галочка</h4>
-        ${me.verified ? `<div class="pe-checks">${Object.entries(CHECKS).map(([k, c]) => `<button class="pe-check ${me.check === k ? "on" : ""}" data-check="${k}">${A.check(k)}<span>${c.name}</span></button>`).join("")}</div>
-          <p class="pn-note">Рядом с именем и в профиле: «Аккаунт верифицирован организацией DuckChance».</p>`
-          : `<button class="cta inline" data-buy-check>Купить галочку за ${STAR}100</button><p class="pn-note">Галочка рядом с именем и надпись «Аккаунт верифицирован организацией DuckChance». Дизайн можно выбрать после покупки.</p>`}
-        <h4 class="sec-title">Рамка аватарки</h4>
-        <div class="pe-frames"><button class="pe-frame ${!me.frame ? "on" : ""}" data-frame="">Без рамки</button>
-          ${Object.entries(FRAMES).map(([k, f]) => `<button class="pe-frame ${me.frame === k ? "on" : ""}" data-frame="${k}"><img src="${f.src}" alt=""><span>${f.name}</span></button>`).join("")}</div>
-        <h4 class="sec-title">Юзернеймы · ${tagsCount} из 10</h4>
-        <section class="list">
-          ${me.handle ? `<div class="row"><span class="grow"><b>@${esc(me.handle)}</b> <i class="hint">основной</i></span></div>` : ""}
-          ${(me.tags || []).map((t) => `<div class="row"><span class="grow">@${esc(t)}</span><button class="mini-btn ghost" data-tag-main="${esc(t)}">Основной</button><button class="mini-btn ghost" data-tag-del="${esc(t)}">×</button></div>`).join("")}
-        </section>
-        ${tagsCount < 10 ? `<div class="pe-add"><input id="peTag" placeholder="${me.handle ? "ещё один юзернейм" : "юзернейм"}" maxlength="32" autocapitalize="off" autocomplete="off" spellcheck="false"><button class="mini-btn" data-tag-add>${me.handle ? `Купить за ${STAR}50` : "Занять"}</button></div>
-          <p class="pn-note">Латиница, цифры и _, от 5 символов. Первый юзернейм бесплатно, каждый следующий 50 звёзд. Брать можно только свободные.</p>` : ""}
-        <h4 class="sec-title">Музыка в профиле</h4>
-        ${me.music ? `${A.musicHtml(me.music)}<div class="pe-row"><button class="mini-btn ghost" data-music-pick>Заменить</button><button class="mini-btn ghost" data-music-del>Убрать</button></div>`
-          : `<button class="cta inline second" data-music-pick>Выбрать аудиофайл</button>`}
-        <p class="pn-note">MP3, M4A, OGG или WAV до 15 МБ. Её смогут включить все, кто откроет ваш профиль.</p>
-        <h4 class="sec-title">Канал в профиле</h4>
-        ${chans.length ? `<section class="list">${[{ id: 0, title: "Не показывать" }, ...chans].map((c) => `<button class="row pn-row ${(me.channel ? me.channel.id : 0) === c.id ? "sel" : ""}" data-set-chan="${c.id}"><span class="grow">${esc(c.title)}</span>${(me.channel ? me.channel.id : 0) === c.id ? "✓" : ""}</button>`).join("")}</section>`
-          : `<p class="pn-note">Создайте свой канал во вкладке «Чаты», и его можно будет показать в профиле.</p>`}
-        <h4 class="sec-title" id="peOrbitT">Подарки вокруг аватарки · ${orbit.length} из 6</h4>
-        ${gifts.length ? `<div class="pe-gifts">${gifts.map((g) => `<button class="pe-gift ${orbit.includes(g) ? "on" : ""}" data-orbit="${g}" style="${A.bg(A.byId[g])}"><i class="pat"></i>${A.pic(A.byId[g])}</button>`).join("")}</div>
-          <button class="cta inline" data-orbit-save>Сохранить подарки</button>` : `<p class="pn-note">Выиграйте подарки, и их можно будет поставить вокруг аватарки.</p>`}
-        <h4 class="sec-title">Истории</h4>
-        <button class="cta inline second" data-story-add>Добавить историю</button>
-        <p class="pn-note">Фото или видео. 24 часа видна кружком на аватарке, потом остаётся в профиле в разделе «Истории».</p>`;
+
+        <div class="pe-h">Цвет ника</div>
+        <div class="pe-card pe-pad">
+          <div class="pe-colors">
+            <button class="pe-color none ${!me.name_color ? "on" : ""}" data-nc="" aria-label="Без цвета">Aa</button>
+            ${Object.entries(NC).map(([k, v]) => { const lock = v.startsWith("linear") && !me.verified; return `<button class="pe-color ${me.name_color === k ? "on" : ""} ${lock ? "lock" : ""}" data-nc="${k}" style="--sw:${v}" aria-label="${k}">${lock ? A.ICON.lock : ""}</button>`; }).join("")}
+          </div>
+        </div>
+        <p class="pe-foot">Градиенты открываются вместе с галочкой.</p>
+
+        <div class="pe-h">Галочка</div>
+        <div class="pe-card pe-pad">
+          ${me.verified ? `<div class="pe-checks">${Object.entries(CHECKS).map(([k, c]) => `<button class="pe-check ${me.check === k ? "on" : ""}" data-check="${k}">${A.check(k)}<span>${c.name}</span></button>`).join("")}</div>`
+            : `<div class="pe-buy">${A.check("classic")}<div><b>Галочка рядом с именем</b><span>и надпись «Аккаунт верифицирован организацией DuckChance»</span></div></div>
+               <button class="pe-btn" data-buy-check>Купить за ${STAR}100</button>`}
+        </div>
+
+        <div class="pe-h">Рамка аватарки</div>
+        <div class="pe-card pe-pad"><div class="pe-frames">
+          <button class="pe-frame ${!me.frame ? "on" : ""}" data-frame=""><span class="pe-noframe"></span><span>Без рамки</span></button>
+          ${Object.entries(FRAMES).map(([k, f]) => `<button class="pe-frame ${me.frame === k ? "on" : ""}" data-frame="${k}"><img src="${f.src}" alt=""><span>${f.name}</span></button>`).join("")}
+        </div></div>
+
+        <div class="pe-h">Описание</div>
+        <div class="pe-card"><textarea id="peBio" maxlength="140" rows="2" placeholder="Пара слов о себе">${esc(me.bio || "")}</textarea><span class="pe-count" id="peBioN">${(me.bio || "").length}/140</span></div>
+        <p class="pe-foot">Сохраняется само, когда вы перестаёте печатать.</p>
+
+        <div class="pe-h">Музыка в профиле</div>
+        <div class="pe-card">
+          ${mus ? `<div class="pe-track cur">${coverHtml(mus, "pe-cov")}<span class="pe-tt"><b>${esc(mus.title)}</b><i>${esc(mus.performer || (mus.source === "telegram" ? "из профиля Telegram" : "свой файл"))}</i></span>
+              <button class="pe-play" data-play-cur aria-label="Слушать">${IC_PLAY}</button></div>` : `<div class="pe-empty">Музыка не выбрана</div>`}
+          ${tracks.length ? `<div class="pe-sub">Из профиля Telegram</div>${tracks.map((t, k) => `<div class="pe-track">${coverHtml(t, "pe-cov")}<span class="pe-tt"><b>${esc(t.title)}</b><i>${esc(t.performer || "")}</i></span>
+              <button class="pe-play" data-tg-play="${k}" aria-label="Слушать">${IC_PLAY}</button>
+              ${mus && mus.url === t.url ? `<span class="pe-on">В профиле</span>` : `<button class="pe-mini" data-tg-set="${k}">Поставить</button>`}</div>`).join("")}` : ""}
+          <button class="pe-row" data-tg-sync>${NOTE}<span>${tracks.length ? "Обновить песни из Telegram" : "Взять песни из профиля Telegram"}</span>${chev}</button>
+          <button class="pe-row" data-music-pick><svg viewBox="0 0 24 24"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M12 11v6"/><path d="M9.5 13.5l2.5 -2.5l2.5 2.5"/></svg><span>Загрузить свой аудиофайл</span>${chev}</button>
+          ${mus ? `<button class="pe-row danger" data-music-del><svg viewBox="0 0 24 24"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></svg><span>Убрать музыку из профиля</span></button>` : ""}
+        </div>
+        <p class="pe-foot">Песни, которые вы добавили себе в профиль Telegram, подтягиваются сами. Свой файл: MP3, M4A, OGG или WAV до 15 МБ.</p>
+
+        <div class="pe-h">Юзернеймы · ${tagsCount} из 10</div>
+        <div class="pe-card">
+          ${me.handle ? `<div class="pe-line"><b>@${esc(me.handle)}</b><span class="pe-on">основной</span></div>` : ""}
+          ${(me.tags || []).map((t) => `<div class="pe-line"><span>@${esc(t)}</span><button class="pe-mini" data-tag-main="${esc(t)}">Сделать основным</button><button class="pe-x" data-tag-del="${esc(t)}" aria-label="Освободить">${A.ICON.x}</button></div>`).join("")}
+          ${tagsCount < 10 ? `<div class="pe-add"><span>@</span><input id="peTag" placeholder="${me.handle ? "ещё один юзернейм" : "юзернейм"}" maxlength="32" autocapitalize="off" autocomplete="off" spellcheck="false"><button class="pe-mini solid" data-tag-add>${me.handle ? `${STAR}50` : "Занять"}</button></div>` : ""}
+        </div>
+        <p class="pe-foot">Латиница, цифры и _, от 5 символов. Первый бесплатно, каждый следующий 50 звёзд. Только свободные.</p>
+
+        <div class="pe-h">Канал в профиле</div>
+        <div class="pe-card">
+          ${chans.length ? [{ id: 0, title: "Не показывать" }, ...chans].map((c) => `<button class="pe-row" data-set-chan="${c.id}"><span>${esc(c.title)}</span>${(me.channel ? me.channel.id : 0) === c.id ? `<i class="pe-tick">${A.check("classic")}</i>` : ""}</button>`).join("")
+            : `<div class="pe-empty">Создайте свой канал во вкладке «Чаты», и он появится здесь</div>`}
+        </div>
+
+        <div class="pe-h" id="peOrbitT">Подарки вокруг аватарки · ${orbit.length} из 6</div>
+        <div class="pe-card pe-pad">
+          ${gifts.length ? `<div class="pe-gifts">${gifts.map((g) => `<button class="pe-gift ${orbit.includes(g) ? "on" : ""}" data-orbit="${g}" style="${A.bg(A.byId[g])}"><i class="pat"></i>${A.pic(A.byId[g])}</button>`).join("")}</div>
+            <button class="pe-btn" data-orbit-save>Сохранить подарки</button>` : `<div class="pe-empty">Выиграйте подарки, и их можно будет поставить вокруг аватарки</div>`}
+        </div>
+
+        <div class="pe-h">Оформление</div>
+        <div class="pe-card">
+          <button class="pe-row" data-look-open><svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25"/><path d="M7.5 10.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M11.5 7.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M15.5 10.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/></svg><span>Цвет и узор фона профиля</span>${chev}</button>
+          <button class="pe-row" data-story-add><svg viewBox="0 0 24 24"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12h6"/><path d="M12 9v6"/></svg><span>Добавить историю</span>${chev}</button>
+        </div>`;
+      const bio = $("#peBio");
+      bio.oninput = () => {
+        $("#peBioN").textContent = `${bio.value.length}/140`;
+        clearTimeout(bioT);
+        bioT = setTimeout(async () => {
+          try { const r = await A.api("POST", "/api/me", { bio: bio.value.trim() }); me = { ...me, bio: r.me.bio }; if (A.refreshMe) A.refreshMe(); } catch { A.toast("Описание не сохранилось"); }
+        }, 900);
+      };
     };
     const save = async (body) => { try { const r = await A.api("POST", "/api/profile", body); me = r.me; paint(); if (A.refreshMe) A.refreshMe(); return true; } catch (e) { A.toast(e && e.message === "not verified" ? "Сначала купите галочку" : "Не получилось сохранить"); return false; } };
     $("#peBody").onclick = async (e) => {
@@ -264,12 +407,9 @@
       if (b.dataset.check) return save({ check: b.dataset.check });
       if (b.dataset.frame != null) return save({ frame: b.dataset.frame || null });
       if (b.dataset.nc != null) {
-        if (b.classList.contains("lock")) return A.toast("Градиентный ник доступен с галочкой");
+        if (b.classList.contains("lock")) return A.toast("Градиентный ник открывается вместе с галочкой");
+        A.hap.select();
         return save({ name_color: b.dataset.nc || null });
-      }
-      if (b.hasAttribute("data-bio-save")) {
-        try { const r = await A.api("POST", "/api/me", { bio: $("#peBio").value.trim() }); me = { ...me, bio: r.me.bio }; A.toast("Описание сохранено"); if (A.refreshMe) A.refreshMe(); } catch { A.toast("Не получилось сохранить"); }
-        return;
       }
       if (b.hasAttribute("data-buy-check")) {
         if (!confirm("Купить галочку за 100 звёзд?")) return;
@@ -291,6 +431,19 @@
       }
       if (b.dataset.tagDel) { if (!confirm(`Освободить @${b.dataset.tagDel}? Звёзды не вернутся.`)) return; try { me = (await A.api("POST", "/api/tags/remove", { tag: b.dataset.tagDel })).me; paint(); if (A.refreshMe) A.refreshMe(); } catch { A.toast("Не получилось"); } return; }
       if (b.dataset.tagMain) { try { me = (await A.api("POST", "/api/tags/main", { tag: b.dataset.tagMain })).me; paint(); if (A.refreshMe) A.refreshMe(); } catch { A.toast("Не получилось"); } return; }
+      if (b.hasAttribute("data-play-cur")) { const list = me.playlist && me.playlist.length ? me.playlist : [me.music]; return A.playList(list, Math.max(0, list.findIndex((t) => t.url === me.music.url)), "Вы"); }
+      if (b.dataset.tgPlay != null) return A.playList(tracks, Number(b.dataset.tgPlay), "Вы");
+      if (b.dataset.tgSet != null) { if (await save({ music: { ...tracks[Number(b.dataset.tgSet)], source: "telegram" } })) A.toast("Песня в профиле"); return; }
+      if (b.hasAttribute("data-tg-sync")) {
+        A.toast("Смотрим песни в вашем профиле Telegram…");
+        try {
+          me = (await A.api("POST", "/api/profile/tgmusic", {})).me;
+          const n = (me.tg_music || []).length;
+          A.toast(n ? `Нашли песен: ${n}` : "В профиле Telegram пока нет песен: добавьте их в Telegram, в разделе «Музыка» профиля");
+          openEditor();
+        } catch { A.toast("Не получилось связаться с Telegram"); }
+        return;
+      }
       if (b.hasAttribute("data-music-pick")) {
         const f = await pick("audio/*,.mp3,.m4a,.ogg,.wav");
         if (!f) return;
@@ -310,13 +463,14 @@
         if (i >= 0) orbit.splice(i, 1); else if (orbit.length < 6) orbit.push(g); else return A.toast("Не больше 6 подарков");
         b.classList.toggle("on", orbit.includes(g)); A.hap.select();
         const h = $("#peOrbitT"); if (h) h.textContent = `Подарки вокруг аватарки · ${orbit.length} из 6`;
+        const pv = $("#peBody .pe-prev-c"); if (pv) pv.innerHTML = A.profileAva({ ...me, orbit }, ownLook().avaHtml);
         return;
       }
       if (b.hasAttribute("data-orbit-save")) { if (await save({ orbit })) A.toast("Подарки вокруг аватарки сохранены"); return; }
       if (b.hasAttribute("data-story-add")) return A.addStory();
     };
     paint();
-    A.openSheet(ed);
+    if (ed.hidden) { $("#peBody").scrollTop = 0; A.openSheet(ed); }
   }
   A.openProfileEditor = openEditor;
 
@@ -325,7 +479,7 @@
     red: "#ff5a5a", orange: "#ff9f43", violet: "#a974ff", green: "#3ecf6f", cyan: "#2ec4e6", blue: "#3b9cff", pink: "#ff6fb5",
     sunset: "linear-gradient(90deg,#ff5a5a,#ffb443)", berry: "linear-gradient(90deg,#a974ff,#ff6fb5)", sea: "linear-gradient(90deg,#3ecf6f,#2ec4e6)",
     night: "linear-gradient(90deg,#3b9cff,#a974ff)", gold: "linear-gradient(90deg,#ffe27a,#f09a12)", aqua: "linear-gradient(90deg,#2ec4e6,#3b9cff)",
-    fire: "linear-gradient(90deg,#ffcf3a,#ff3d3d)",
+    fire: "linear-gradient(90deg,#ffcf3a,#ff3d3d)", candy: "linear-gradient(90deg,#ff6fb5,#2ec4e6)",
   };
   A.NAME_COLORS = NAME_COLORS;
   const nameStyle = (c) => {
@@ -369,11 +523,15 @@
     const others = (u.gifts || []).filter((g) => A.byId[g]);
     const grid = inv ? inv.map((it) => giftTile(A.byId[it.id], `data-uid="${it.uid}"`, !!it.stake)).join("") : others.map((g) => giftTile(A.byId[g], `data-g="${g}"`)).join("");
     const online = seenText(u) === "в сети";
+    if (u.music) {         // список песен игрока для плеера
+      const list = (u.playlist && u.playlist.length ? u.playlist : [u.music]);
+      A.musicOf[u.id] = { list, start: Math.max(0, list.findIndex((t) => t.url === u.music.url)), owner: u.name };
+    }
     const ch = u.channel;
     return `<div class="tgp" style="${style}">
       <div class="tgp-head">
         <div class="tgp-top">
-          ${opts.own ? `<button class="tgp-ic" data-pv="fair" aria-label="Честная игра">${ICON.shield}</button><button class="tgp-ic" data-pv="edit" aria-label="Изменить профиль">${ICON.pen}</button>` : ""}
+          ${opts.own ? `<button class="tgp-ic" data-pv="edit" aria-label="Изменить профиль">${ICON.pen}</button>` : ""}
           ${opts.own || opts.close ? `<button class="tgp-ic" data-pv="close" aria-label="Закрыть">${ICON.x}</button>` : ""}
         </div>
         <div class="tgp-hero"><div class="tgp-c">
@@ -385,12 +543,12 @@
         <div class="tgp-pills"><span class="tgp-pill ${online ? "on" : ""}">${seenText(u)}</span></div>
         ${u.balance != null ? `<button class="tgp-bal" data-pv="balance">Баланс: ${STAR}<b>${fmt(u.balance)}</b>${ICON.chev}</button>` : ""}
       </div>
-      ${u.music ? `<button class="tgp-music" data-music="${esc(u.music.url)}">${ICON.note}<span>${esc(u.music.title)}</span><b class="pm-eq"><i></i><i></i><i></i></b>${ICON.chev}</button>` : ""}
+      ${u.music ? `<button class="tgp-music" data-play="${u.id}" data-play-url="${esc(u.music.url)}">${ICON.note}<span>${esc([u.music.performer, u.music.title].filter(Boolean).join(" - "))}</span><b class="pm-eq"><i></i><i></i><i></i></b>${ICON.chev}</button>` : ""}
       <div class="tgp-body">
         ${opts.acts || ""}
         ${ch ? `<button class="tgp-chan" data-chan="${ch.id}">
           <span class="ava tint" style="--h:${(ch.id * 47) % 360};${ch.photo ? `background-image:url('${esc(ch.photo)}')` : ""}">${ch.photo ? "" : esc(ch.title.charAt(0))}</span>
-          <span class="tgp-chan-t"><b>${esc(ch.title)}</b><span>Канал</span></span><i>${fmt(ch.members)} ${plural(ch.members)}</i></button>` : ""}
+          <span class="tgp-chan-t"><b>${esc(ch.title)}${A.verMark(ch)}</b><span>Канал</span></span><i>${fmt(ch.members)} ${plural(ch.members)}</i></button>` : ""}
         <div class="tgp-info">
           ${u.handle ? `<div class="tgp-row"><b class="tgp-handle" data-copy="@${esc(u.handle)}">@${esc(u.handle)}${ICON.copy}</b>
             ${(u.tags || []).length ? `<span class="tgp-also">а также ${(u.tags || []).map((t) => `<b data-copy="@${esc(t)}">@${esc(t)}</b>`).join(", ")}</span>` : `<span>Имя пользователя</span>`}</div>` : ""}
@@ -437,7 +595,8 @@
     const g = look.gift && A.byId[look.gift] ? A.byId[look.gift] : null;
     const opts = { own: true, look, tab: myTab, avaHtml: av ? av.outerHTML.replace(/\sdata-ava(="[^"]*")?/, "") : "",
       giftMark: g ? `<img class="nm-gift" src="${g.img}" alt="">` : "" };
-    const draw = () => { myTab = opts.tab; view.innerHTML = A.profileView(u, opts); };
+    // перерисовываем только если что-то поменялось: иначе кнопки пропадают прямо под пальцем
+    const draw = () => { myTab = opts.tab; const html = A.profileView(u, opts); if (html !== view._html) { view.innerHTML = html; view._html = html; } };
     draw();
     view.hidden = false;
     if (banner) banner.hidden = true;

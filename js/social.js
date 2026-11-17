@@ -116,7 +116,7 @@
   }
   const giftMark = (look) => { const g = look && look.gift && byId[look.gift]; return g ? `<img class="nm-gift" src="${g.img}" alt="">` : ""; };
   const vm = (u) => (A.verMark ? A.verMark(u) : "");      // галочка рядом с именем
-  const chatName = (c) => c.kind === "dm" ? esc(c.peer.name) + vm(c.peer) + giftMark(c.peer.look) : esc(c.title);
+  const chatName = (c) => c.kind === "dm" ? esc(c.peer.name) + vm(c.peer) + giftMark(c.peer.look) : esc(c.title) + vm(c);
 
   // обложка как у профиля в Telegram: цвет фона подарка и символы кольцами вокруг аватарки
   const RINGS = [[58, 7, 0.55, 20], [90, 11, 0.38, 18], [124, 15, 0.24, 17], [160, 19, 0.13, 15], [198, 23, 0.06, 14]];
@@ -393,7 +393,7 @@
     const joined = chats.some((x) => x.id === c.id);
     const own = c.owner || {};
     return `<div class="inv">${cover(c.look, c.id + 7, `${chatAva(c, "inv-ava")}${g ? `<img class="inv-gift" src="${g.img}" alt="">` : ""}`, "sm")}
-      <div class="inv-body"><span class="inv-kind">${c.kind === "channel" ? ICON_CHANNEL : ICON_GROUP}${kindName(c)} · ${members(c)}</span><b>${esc(c.title)}</b>${c.about ? `<p>${esc(c.about)}</p>` : ""}
+      <div class="inv-body"><span class="inv-kind">${c.kind === "channel" ? ICON_CHANNEL : ICON_GROUP}${kindName(c)} · ${members(c)}</span><b>${esc(c.title)}${vm(c)}</b>${c.about ? `<p>${esc(c.about)}</p>` : ""}
       ${own.name ? `<span class="inv-own">Владелец: ${esc(own.name)}${own.handle ? ` <i>@${esc(own.handle)}</i>` : ""}</span>` : ""}</div>
       <span class="inv-btn" data-open="${c.id}">${joined ? "Открыть" : c.kind === "channel" ? "Подписаться" : "Вступить"}</span></div>`;
   }
@@ -702,7 +702,7 @@
       const role = { owner: "владелец", admin: "админ" };
       const paint = () => {
         const showMembers = c.kind === "group" || (c.can && (c.can.ban || c.can.promote));
-        el.innerHTML = `${cover(c.look, c.id + 7, `${chatAva(c, "xl")}<h2>${esc(c.title)}</h2><p>${kindName(c)} · ${members(c)}</p>`)}
+        el.innerHTML = `${cover(c.look, c.id + 7, `${chatAva(c, "xl")}<h2>${esc(c.title)}${vm(c)}</h2><p>${kindName(c)} · ${members(c)}</p>`)}
           <div class="pn-acts">
             ${c.role ? actBtn("open", c.kind === "channel" ? "Канал" : "Чат", "dm") : actBtn("join", c.kind === "channel" ? "Подписаться" : "Вступить", "join")}
             ${actBtn("invite", "Пригласить", "invite")}
@@ -711,6 +711,8 @@
           </div>
           ${c.role ? `<section class="list"><label class="row pn-row"><span class="grow">Уведомления в боте</span><input type="checkbox" class="sw" data-mute ${c.muted ? "" : "checked"}></label></section>` : ""}
           ${c.private ? `<p class="pn-note">Закрытая ${c.kind === "channel" ? "канал" : "группа"}: не видна в поиске, вступить можно только по приглашению участника.</p>` : ""}
+          ${c.verified ? `<p class="ch-verified">${vm(c)}${c.kind === "channel" ? "Канал верифицирован" : "Группа верифицирована"} организацией «DuckChance».</p>` : ""}
+          ${A.amAdmin ? `<section class="list"><button class="row pn-row" data-act="adminverify">${c.verified ? "Снять галочку (админ)" : "Выдать галочку (админ)"}</button></section>` : ""}
           <section class="list pn-info">
             ${c.handle ? `<button class="pn-line" data-act="copylink"><b>@${esc(c.handle)}</b><span>публичная ссылка</span></button>` : ""}
             ${c.about ? `<div class="pn-line"><b class="pre">${esc(c.about)}</b><span>описание</span></div>` : ""}
@@ -731,6 +733,7 @@
         if (a === "join") { try { await call("POST", `/api/chat/${c.id}/join`, {}); hap.win(); openChat(c.id); } catch (er) { fail(er); } }
         if (a === "open") { if (cur && cur.id === c.id) closeSheet(); else openChat(c.id); }
         if (a === "invite") push(inviteScreen(c));
+        if (a === "adminverify") { try { c = { ...c, ...(await call("POST", `/api/chat/${c.id}/verify`, { admin: true, on: !c.verified })) }; hap.win(); toast(c.verified ? "Галочка выдана" : "Галочка снята"); paint(); refreshChat(); } catch (er) { fail(er); } return; }
         if (a === "settings") push(settingsScreen(c));
         if (a === "copylink") copy("@" + c.handle, "Ссылка скопирована");
         if (a === "leave") {
@@ -854,6 +857,10 @@
             <input class="st-in" data-f="title" maxlength="48" placeholder="Название" value="${esc(d.title)}">
             <textarea class="st-in" data-f="about" maxlength="255" rows="2" placeholder="Описание">${esc(d.about)}</textarea>
           </section>
+          ${c.role === "owner" ? `<h4 class="sec-title">Галочка</h4>
+            ${c.verified ? `<div class="pe-checks st-checks">${Object.entries(A.CHECKS || {}).map(([k, x]) => `<button class="pe-check ${c.check === k ? "on" : ""}" data-act="chk" data-chk="${k}">${A.check(k)}<span>${x.name}</span></button>`).join("")}</div>`
+              : `<section class="list"><button class="row pn-row" data-act="buycheck"><span class="grow">Купить галочку ${c.kind === "channel" ? "каналу" : "группе"}</span><span class="pn-val">${STAR}100</span></button></section>
+                 <p class="pn-note">Галочка рядом с названием и надпись «верифицирован организацией DuckChance».</p>`}` : ""}
           <h4 class="sec-title">Публичная ссылка</h4>
           <section class="list st-form"><label class="st-handle"><span>@</span><input class="st-in" data-f="handle" maxlength="24" placeholder="ссылка" value="${esc(d.handle)}" autocapitalize="off" autocomplete="off" spellcheck="false"></label></section>
           <p class="pn-note st-hint">${hState || hint}</p>
@@ -897,6 +904,13 @@
         const a = b.dataset.act;
         if (a === "photo") { try { const ph = await upload(640, true); if (ph) { d.photo = ph.url; paint(); } } catch (er) { fail(er); } }
         if (a === "nophoto") { d.photo = ""; paint(); }
+        if (a === "buycheck") {
+          if (!(await confirmBox(`Купить галочку ${c.kind === "channel" ? "каналу" : "группе"} за 100 звёзд?`))) return;
+          try { const r = await call("POST", `/api/chat/${c.id}/verify`, {}); if (r.state) A.applyServer(r.state); Object.assign(c, r); hap.win(); toast("Галочка ваша, выберите дизайн"); paint(); refreshChat(); }
+          catch (er) { toast(er && er.message === "not enough stars" ? "Не хватает звёзд" : "Не получилось купить"); }
+          return;
+        }
+        if (a === "chk") { try { Object.assign(c, await call("POST", `/api/chat/${c.id}/check`, { check: b.dataset.chk })); hap.select(); paint(); refreshChat(); } catch (er) { fail(er); } return; }
         if (a === "perms") push(permsScreen(c));
         if (a === "admins") push(adminsScreen(c));
         if (a === "members") push(membersScreen(c, false));
@@ -1287,7 +1301,7 @@
       const body = { look: A.bannerLook(), gifts: giftIds(), balance: Math.floor(st().balance), staked: st().inv.filter((x) => x.stake).length,
         wagered: Math.floor(st().stats.wagered || 0), won: Math.floor(st().stats.won || 0) }, j = JSON.stringify(body);
       if (j === sent && !force) return;
-      call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; paintHandle(); if (r.pending) claimIncoming(); if (r.grants) claimGrants(); }).catch(() => {});
+      call("POST", "/api/me", body).then((r) => { sent = j; me = r.me; A.amAdmin = !!r.admin; paintHandle(); if (r.pending) claimIncoming(); if (r.grants) claimGrants(); }).catch(() => {});
     }, force ? 0 : 1200);
   }
   // ---------- настройки из админки, выдачи, промокоды, задания ----------

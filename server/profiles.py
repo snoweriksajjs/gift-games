@@ -7,7 +7,7 @@
 - Подарки вокруг аватарки: до 6 своих подарков.
 - Истории: фото или видео, 24 часа видны кружком на аватарке, потом остаются в профиле в разделе «Истории».
 """
-import json, re, time
+import hashlib, json, os, re, threading, time, urllib.request
 
 G = {}
 TAG = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,31}$")
@@ -15,7 +15,7 @@ MAX_TAGS, TAG_PRICE, CHECK_PRICE = 10, 50, 100
 CHECKS = ["classic", "mint", "violet", "gold", "rose", "fire", "ice", "dark"]   # дизайны галочки
 # цвет ника: однотонные для всех, градиенты для аккаунтов с галочкой
 NAME_SOLID = ["red", "orange", "violet", "green", "cyan", "blue", "pink"]
-NAME_GRAD = ["sunset", "berry", "sea", "night", "gold", "aqua", "fire"]
+NAME_GRAD = ["sunset", "berry", "sea", "night", "gold", "aqua", "fire", "candy"]
 FRAMES = ["wings"]                     # рамки вокруг аватарки
 STORY_TTL = 86400
 
@@ -31,8 +31,10 @@ def bind(g):
     CREATE INDEX IF NOT EXISTS stories_user ON stories (user, id);
     CREATE TABLE IF NOT EXISTS story_views (story INTEGER, user INTEGER, at INTEGER, PRIMARY KEY (story, user));
     CREATE TABLE IF NOT EXISTS profile_views (user INTEGER, viewer INTEGER, at INTEGER, PRIMARY KEY (user, viewer));
+    CREATE TABLE IF NOT EXISTS tg_files (fid TEXT PRIMARY KEY, url TEXT, at INTEGER);
     """)
-    for c, d in [("music", "TEXT"), ("channel", "INTEGER"), ("orbit", "TEXT"), ("verified", "INTEGER"), ("check_style", "TEXT"), ("name_color", "TEXT"), ("frame", "TEXT")]:
+    for c, d in [("music", "TEXT"), ("channel", "INTEGER"), ("orbit", "TEXT"), ("verified", "INTEGER"), ("check_style", "TEXT"), ("name_color", "TEXT"), ("frame", "TEXT"),
+                 ("tgmusic", "TEXT"), ("tgmusic_at", "INTEGER")]:
         g["add_column"]("users", c, d)
 
 
@@ -73,7 +75,7 @@ def active_story(uid):
 
 def extra(uid, full=False, viewer=None):
     """Добавка к карточке игрока: галочка и истории. В полной карточке ещё музыка, канал, юзернеймы и подарки."""
-    u = q1("SELECT verified, check_style, music, channel, orbit, name_color, created, frame FROM users WHERE id=?", uid) or {}
+    u = q1("SELECT verified, check_style, music, channel, orbit, name_color, created, frame, tgmusic FROM users WHERE id=?", uid) or {}
     verified = bool(u.get("verified")) or is_admin(uid)
     st = active_story(uid)
     nc = u.get("name_color")
@@ -87,8 +89,17 @@ def extra(uid, full=False, viewer=None):
         return out
     out["tags"] = [r["tag"] for r in q("SELECT tag FROM tags WHERE user=? ORDER BY at", uid)]
     out["music"] = json.loads(u["music"]) if u.get("music") else None
-    ch = q1("SELECT id, title, photo, handle FROM chats WHERE id=? AND kind='channel' AND owner=?", u.get("channel") or 0, uid)
+    if out["music"] and out["music"].get("off"):
+        out["music"] = None
+    tg = json.loads(u["tgmusic"]) if u.get("tgmusic") else []
+    # плейлист: песни из профиля Telegram, если играет одна из них, иначе свой файл
+    out["playlist"] = tg if out["music"] and out["music"].get("source") == "telegram" and tg else ([out["music"]] if out["music"] else [])
+    if full and u.get("tgmusic") is not None:
+        out["tg_music"] = tg
+    ch = q1("SELECT id, title, photo, handle, verified, check_style FROM chats WHERE id=? AND kind='channel' AND owner=?", u.get("channel") or 0, uid)
     if ch:
+        ch["verified"] = bool(ch["verified"])
+        ch["check"] = (ch.pop("check_style") or "classic") if ch["verified"] else None
         ch["members"] = (q1("SELECT COUNT(*) n FROM members WHERE chat=?", ch["id"]) or {}).get("n", 0)
     out["channel"] = ch
     orbit = json.loads(u["orbit"]) if u.get("orbit") else []
@@ -108,6 +119,79 @@ def viewed(uid, viewer, now):
         run("INSERT OR IGNORE INTO profile_views (user, viewer, at) VALUES (?, ?, ?)", uid, viewer, now)
 
 
+# ---------- музыка из профиля Telegram ----------
+def tg_file(file_id, fid, kinds):
+    """Файл из Telegram к нам на сервер (один раз на файл): бот получает путь через getFile и скачивает."""
+    row = q1("SELECT url FROM tg_files WHERE fid=?", fid)
+    if row and G["clean_media"](row["url"], kinds):
+        return row["url"]
+    path = G["tg_call"]("getFile", file_id=file_id)["result"]["file_path"]
+    with urllib.request.urlopen(f"https://api.telegram.org/file/bot{G['TOKEN']}/{path}", timeout=60) as r:
+        raw = r.read(G["RAW_MAX"] + 1)
+    if len(raw) > G["RAW_MAX"]:
+        return ""
+    ext = G["sniff"](raw, "audio" if "mp3" in kinds else "story")
+    if ext not in kinds:
+        return ""
+    name = hashlib.sha256(raw).hexdigest()[:20] + "." + ext
+    dst = os.path.join(G["MEDIA"], name)
+    if not os.path.exists(dst):
+        with open(dst, "wb") as f:
+            f.write(raw)
+    url = f"{G['PUBLIC']}/media/{name}"
+    run("INSERT OR REPLACE INTO tg_files (fid, url, at) VALUES (?, ?, ?)", fid, url, int(time.time()))
+    return url
+
+
+syncing = set()
+
+
+def tg_music_sync(uid, force=False):
+    """Песни, которые игрок добавил себе в профиль Telegram (getUserProfileAudios). Не чаще раза в 6 часов.
+    Если своя музыка не выбрана, в профиле DuckChance играет первая песня из Telegram."""
+    u = q1("SELECT music, tgmusic_at FROM users WHERE id=?", uid)
+    if not u or uid in syncing or (not force and u.get("tgmusic_at") and time.time() - u["tgmusic_at"] < 6 * 3600):
+        return
+    syncing.add(uid)
+    try:
+        run("UPDATE users SET tgmusic_at=? WHERE id=?", int(time.time()), uid)
+        audios = (G["tg_call"]("getUserProfileAudios", user_id=uid, limit=10).get("result") or {}).get("audios") or []
+        tracks = []
+        for a in audios[:10]:
+            try:
+                url = tg_file(a["file_id"], a["file_unique_id"], ("mp3", "m4a", "ogg", "wav"))
+            except Exception as e:
+                print("Песня из профиля не скачалась:", uid, repr(e), flush=True)
+                continue
+            if not url:
+                continue
+            cover = ""
+            th = a.get("thumbnail")
+            if th:
+                try:
+                    cover = tg_file(th["file_id"], th["file_unique_id"], ("jpg",))
+                except Exception:
+                    cover = ""
+            tracks.append({"url": url, "title": (a.get("title") or a.get("file_name") or "Без названия")[:64],
+                           "performer": (a.get("performer") or "")[:64], "cover": cover, "duration": a.get("duration") or 0, "source": "telegram"})
+        run("UPDATE users SET tgmusic=? WHERE id=?", json.dumps(tracks, ensure_ascii=False), uid)
+        cur = json.loads(u["music"]) if u.get("music") else None
+        if cur is None or cur.get("source") == "telegram":   # свою музыку и «выключено» не трогаем
+            keep = next((t for t in tracks if cur and t["url"] == cur.get("url")), None) or (tracks[0] if tracks else None)
+            run("UPDATE users SET music=? WHERE id=?", json.dumps(keep, ensure_ascii=False) if keep else None, uid)
+    except Exception as e:
+        print("Музыка из профиля Telegram:", uid, repr(e), flush=True)
+    finally:
+        syncing.discard(uid)
+
+
+def tg_music_soon(uid):
+    """Проверить песни профиля в фоне, не задерживая ответ."""
+    u = q1("SELECT tgmusic_at FROM users WHERE id=?", uid)
+    if u and (not u.get("tgmusic_at") or time.time() - u["tgmusic_at"] >= 6 * 3600):
+        threading.Thread(target=tg_music_sync, args=(uid,), daemon=True).start()
+
+
 def story_out(s, viewer):
     return {"id": s["id"], "user": s["user"], "url": s["url"], "kind": s["kind"], "caption": s["caption"] or "", "created": s["created"],
             "active": s["created"] > int(time.time()) - STORY_TTL,
@@ -123,13 +207,19 @@ def handle(method, p, uid, body, query, now):
         sets = []
         if "music" in body:
             m = body["music"]
-            if m:
+            if not m:                                     # выключено вручную: песни из Telegram сами не вернутся
+                sets.append(("music", json.dumps({"off": True})))
+            elif m.get("source") == "telegram":           # одна из песен профиля Telegram
+                tg = json.loads((q1("SELECT tgmusic FROM users WHERE id=?", uid) or {}).get("tgmusic") or "[]")
+                pick = next((t for t in tg if t["url"] == m.get("url")), None)
+                if not pick:
+                    raise err(400, "bad music")
+                sets.append(("music", json.dumps(pick, ensure_ascii=False)))
+            else:                                         # свой файл
                 url = G["clean_media"](m.get("url"), ("mp3", "m4a", "ogg", "wav"))
                 if not url:
                     raise err(400, "bad music")
-                sets.append(("music", json.dumps({"url": url, "title": G["clean"](m.get("title"), 64) or "Без названия"}, ensure_ascii=False)))
-            else:
-                sets.append(("music", None))
+                sets.append(("music", json.dumps({"url": url, "title": G["clean"](m.get("title"), 64) or "Без названия", "source": "file"}, ensure_ascii=False)))
         if "channel" in body:
             cid = int(body["channel"] or 0)
             if cid and not q1("SELECT 1 x FROM chats WHERE id=? AND kind='channel' AND owner=?", cid, uid):
@@ -162,6 +252,11 @@ def handle(method, p, uid, body, query, now):
             sets.append(("check_style", body["check"]))
         for k, v in sets:
             run(f"UPDATE users SET {k}=? WHERE id=?", v, uid)
+        return {"me": G["user_card"](uid, True)}
+
+    if p == ["profile", "tgmusic"] and method == "POST":     # обновить песни из профиля Telegram сейчас
+        G["limit"](uid, "tgmusic", 6, 600)
+        tg_music_sync(uid, force=True)
         return {"me": G["user_card"](uid, True)}
 
     if p == ["tags", "add"] and method == "POST":
