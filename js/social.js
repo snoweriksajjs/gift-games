@@ -34,7 +34,9 @@
   A.apiReady = () => canUse;
   const fail = (e) => {
     const s = e && e.status, t = e && e.message;
-    toast(t === "daily limit" ? "На сегодня передач больше нельзя, попробуйте завтра"
+    toast(t === "blocked" ? "Игрок ограничил сообщения и подарки от вас"
+      : t === "not a member" ? "Это закрытая группа: вступить можно по приглашению"
+      : t === "daily limit" ? "На сегодня передач больше нельзя, попробуйте завтра"
       : t === "transfers off" ? "Передача подарков временно выключена"
       : t === "maintenance" ? "Идут технические работы"
       : t === "banned" ? "Аккаунт заблокирован"
@@ -674,7 +676,9 @@
             ${u.bio ? `<div class="pn-line"><b class="pre">${esc(u.bio)}</b><span>о себе</span></div>` : ""}
             ${g ? `<div class="pn-line"><b>${esc(g.gift)} ✦</b><span>особый стиль коллекции</span></div>` : ""}
           </section>` : ""}
-          ${gifts.length ? `<h4 class="sec-title">Подарки · ${gifts.length}</h4><div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}</button>`).join("")}</div>` : ""}`;
+          ${gifts.length ? `<h4 class="sec-title">Подарки · ${gifts.length}</h4><div class="pn-gifts">${gifts.map((id) => `<button class="pn-gift" data-g="${id}" style="${A.bg(byId[id])}"><i class="pat"></i>${A.pic(byId[id])}</button>`).join("")}</div>` : ""}
+          ${mine ? "" : `<section class="list"><button class="row pn-row ${u.blocked ? "" : "danger"}" data-act="block">${u.blocked ? "Разблокировать" : "Заблокировать"}</button></section>
+          <p class="pn-note">${u.blocked ? "Игрок не может писать вам в личку и дарить подарки." : "Заблокированный игрок не сможет писать вам в личку и дарить подарки."}</p>`}`;
       };
       el.onclick = async (e) => {
         const b = e.target.closest("[data-act]"), gb = e.target.closest("[data-g]");
@@ -683,6 +687,10 @@
         if (b.dataset.act === "dm") { try { const c = await call("POST", "/api/dm", { user: u.id }); openChat(c.id); } catch (er) { fail(er); } }
         if (b.dataset.act === "gift") pickGift(u);
         if (b.dataset.act === "copy") copy("@" + u.handle, "Имя пользователя скопировано");
+        if (b.dataset.act === "block") {
+          if (!u.blocked && !(await confirmBox(`Заблокировать ${u.name}?`))) return;
+          try { const r = await call("POST", "/api/block", { user: u.id, on: !u.blocked }); u = { ...u, blocked: r.blocked }; hap.select(); paint(); toast(r.blocked ? "Заблокирован" : "Разблокирован"); } catch (er) { fail(er); }
+        }
       };
       paint();
       call("GET", `/api/user/${u.id}`).then((x) => { u = x; if (el.isConnected) paint(); }).catch(() => {});
@@ -704,6 +712,8 @@
             ${c.can && c.can.info ? actBtn("settings", "Изменить", "gear") : ""}
             ${c.role && c.role !== "owner" ? actBtn("leave", "Выйти", "leave", "danger") : ""}
           </div>
+          ${c.role ? `<section class="list"><label class="row pn-row"><span class="grow">Уведомления в боте</span><input type="checkbox" class="sw" data-mute ${c.muted ? "" : "checked"}></label></section>` : ""}
+          ${c.private ? `<p class="pn-note">Закрытая ${c.kind === "channel" ? "канал" : "группа"}: не видна в поиске, вступить можно только по приглашению участника.</p>` : ""}
           <section class="list pn-info">
             ${c.handle ? `<button class="pn-line" data-act="copylink"><b>@${esc(c.handle)}</b><span>публичная ссылка</span></button>` : ""}
             ${c.about ? `<div class="pn-line"><b class="pre">${esc(c.about)}</b><span>описание</span></div>` : ""}
@@ -711,6 +721,10 @@
           </section>
           ${showMembers && list.length ? `<h4 class="sec-title">${c.kind === "channel" ? "Подписчики" : "Участники"} · ${list.length}</h4>
             <section class="list ch-list">${list.map((u) => `<button class="ch-row slim" data-user="${u.id}">${ava(u, "sm2")}<span class="ch-main"><span class="ch-l1"><b>${esc(u.name)}${giftMark(u.look)}</b>${u.title || role[u.role] ? `<i class="m-role">${esc(u.title || role[u.role])}</i>` : ""}</span><span class="ch-l2"><span class="ch-prev ${Date.now() / 1000 - u.seen < 120 ? "online" : ""}">${esc(seenText(u))}</span></span></span></button>`).join("")}</section>` : ""}`;
+      };
+      el.onchange = async (e) => {
+        if (!e.target.matches("[data-mute]")) return;
+        try { const r = await call("POST", `/api/chat/${c.id}/mute`, { on: !e.target.checked }); c = { ...c, muted: r.muted }; toast(r.muted ? "Без звука: бот не будет напоминать об этом чате" : "Уведомления включены"); } catch (er) { e.target.checked = !e.target.checked; fail(er); }
       };
       el.onclick = async (e) => {
         const b = e.target.closest("[data-act]"), ub = e.target.closest("[data-user]");
@@ -831,7 +845,7 @@
   // настройки группы или канала
   function settingsScreen(c) {
     return (el) => {
-      const d = { title: c.title, about: c.about || "", photo: c.photo || "", look: c.look, handle: c.handle || "" };
+      const d = { title: c.title, about: c.about || "", photo: c.photo || "", look: c.look, handle: c.handle || "", private: !!c.private };
       let hState = "";
       const hint = "По ссылке группу находят через поиск. Латиница, цифры и подчёркивание, от 4 символов.";
       const gifts = [...new Set([...st().inv].sort((a, b) => byId[b.id].price - byId[a.id].price).map((x) => x.id))];
@@ -846,6 +860,8 @@
           <h4 class="sec-title">Публичная ссылка</h4>
           <section class="list st-form"><label class="st-handle"><span>@</span><input class="st-in" data-f="handle" maxlength="24" placeholder="ссылка" value="${esc(d.handle)}" autocapitalize="off" autocomplete="off" spellcheck="false"></label></section>
           <p class="pn-note st-hint">${hState || hint}</p>
+          ${c.role === "owner" ? `<section class="list"><label class="row pn-row"><span class="grow">Закрытая</span><input type="checkbox" class="sw" data-private ${d.private ? "checked" : ""}></label></section>
+          <p class="pn-note">Закрытую ${c.kind === "channel" ? "канал" : "группу"} не найти в поиске, вступить можно только по приглашению участника.</p>` : ""}
           <h4 class="sec-title">Обложка</h4>
           <div class="st-looks">
             <button class="st-look none ${!l ? "on" : ""}" data-look="-1">Нет</button>
@@ -875,6 +891,7 @@
           const n = el.querySelector(".st-hint"); if (n) n.innerHTML = hState || hint;
         }, 350);
       };
+      el.addEventListener("change", (e) => { if (e.target.matches("[data-private]")) d.private = e.target.checked; });
       el.onclick = async (e) => {
         const b = e.target.closest("[data-act],[data-look],[data-gl],[data-bl]"); if (!b) return;
         if (b.dataset.look) { d.look = null; hap.select(); return paint(); }
@@ -899,6 +916,7 @@
         if ((d.photo || "") !== (c.photo || "")) body.photo = d.photo || "";
         if (JSON.stringify(d.look || null) !== JSON.stringify(c.look || null)) body.look = d.look;
         if (d.handle.trim().replace(/^@/, "") !== (c.handle || "")) body.handle = d.handle.trim().replace(/^@/, "");
+        if (d.private !== !!c.private) body.private = d.private;
         if (!Object.keys(body).length) return pop();
         if (body.title === "") return toast("Введите название");
         try { Object.assign(c, await call("POST", `/api/chat/${c.id}/edit`, body)); hap.win(); toast("Сохранено"); refreshChat(); pop(); } catch (er) { fail(er); }
@@ -1127,6 +1145,7 @@
     const it = st().inv.find((x) => x.uid === uid);
     if (!it || it.stake) return;
     const s = byId[it.id], btn = $("#sdGo");
+    if (s.price >= 10000 && !(await confirmBox(`Передать ${s.gift} (${s.model}) за ${A.fmtS(s.price)} ⭐ игроку ${peer.name}? Вернуть подарок нельзя.`))) return;
     btn.disabled = true; btn.innerHTML = `<span class="spin"></span>`;
     let r;
     try { r = await call("POST", "/api/gift/send", { to: peer.id, gift: it.id }); } catch (e) { btn.disabled = false; btn.textContent = "Передать"; return fail(e); }
@@ -1410,7 +1429,7 @@
       const title = $("#ncTitle").value.trim();
       if (!title) return toast("Введите название");
       try {
-        const c = await call("POST", "/api/chats", { kind, title, about: $("#ncAbout").value.trim(), photo: ncPhoto });
+        const c = await call("POST", "/api/chats", { kind, title, about: $("#ncAbout").value.trim(), photo: ncPhoto, private: $("#ncPrivate").checked });
         closeSheet(); hap.win(); openChat(c.id);
       } catch (e) { fail(e); }
     });

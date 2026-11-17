@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, from
   msg INTEGER, created INTEGER, claimed INTEGER);
 CREATE INDEX IF NOT EXISTS transfers_to ON transfers (to_user, claimed);
 CREATE TABLE IF NOT EXISTS bans (chat INTEGER, user INTEGER, PRIMARY KEY (chat, user));
+CREATE TABLE IF NOT EXISTS blocks (user INTEGER, target INTEGER, at INTEGER, PRIMARY KEY (user, target));
 """)
 
 
@@ -87,8 +88,8 @@ def add_column(table, col, decl):
 # новые поля поверх первой версии базы
 for t, c, d in [("users", "created", "INTEGER"), ("users", "balance", "INTEGER"), ("users", "staked", "INTEGER"), ("users", "handle", "TEXT"), ("users", "gifts", "TEXT"), ("users", "bio", "TEXT"),
                 ("chats", "photo", "TEXT"), ("chats", "look", "TEXT"), ("chats", "handle", "TEXT"),
-                ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"),
-                ("members", "title", "TEXT"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
+                ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"), ("chats", "private", "INTEGER"),
+                ("members", "title", "TEXT"), ("members", "muted", "INTEGER"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
                 ("messages", "kind", "TEXT DEFAULT 'text'"), ("messages", "data", "TEXT"), ("messages", "deleted", "INTEGER")]:
     add_column(t, c, d)
 db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_handle ON users (handle COLLATE NOCASE)")
@@ -209,8 +210,19 @@ def user_card(uid, full=False):
     return out
 
 
+def blocked(by, who):
+    """by заблокировал who: who не может писать by в личку и дарить ему подарки."""
+    return bool(q1("SELECT 1 x FROM blocks WHERE user=? AND target=?", by, who))
+
+
+def invited(cid, uid):
+    """В закрытую группу или канал можно войти, только если участник прислал приглашение в личные сообщения."""
+    return bool(q1("""SELECT 1 x FROM messages m JOIN members mm ON mm.chat=m.chat AND mm.user=? JOIN chats c ON c.id=m.chat
+                      WHERE c.kind='dm' AND m.kind='invite' AND m.deleted IS NULL AND m.data=?""", uid, json.dumps({"chat": cid})))
+
+
 def member(chat, uid):
-    m = q1("SELECT role, read_id, title, rights FROM members WHERE chat=? AND user=?", chat, uid)
+    m = q1("SELECT role, read_id, title, rights, muted FROM members WHERE chat=? AND user=?", chat, uid)
     if m:
         m["rights"] = jload(m["rights"], {})
     return m
@@ -265,6 +277,7 @@ def chat_out(c, uid, full=False):
     out = {"id": c["id"], "kind": c["kind"], "title": c["title"], "about": c["about"] or "", "owner": c["owner"],
            "photo": c["photo"] or "", "look": jload(c["look"]), "handle": c["handle"] or "",
            "role": me["role"] if me else None, "my_title": me["title"] if me else "",
+           "private": bool(c["private"]), "muted": bool(me and me.get("muted")),
            "members": q1("SELECT COUNT(*) n FROM members WHERE chat=?", c["id"])["n"],
            "last": msg_out(last, {}) if last else None,
            "unread": q1("SELECT COUNT(*) n FROM messages WHERE chat=? AND id>? AND user<>?", c["id"], me["read_id"], uid)["n"] if me else 0}
@@ -337,8 +350,8 @@ def notify(cid, uid, text, gift):
     c = chat_or_404(cid)
     if c["kind"] != "dm":
         return
-    other = q1("SELECT u.id, u.seen FROM members m JOIN users u ON u.id=m.user WHERE m.chat=? AND m.user<>?", cid, uid)
-    if not other or time.time() - (other["seen"] or 0) < 60:
+    other = q1("SELECT u.id, u.seen, m.muted FROM members m JOIN users u ON u.id=m.user WHERE m.chat=? AND m.user<>?", cid, uid)
+    if not other or other["muted"] or blocked(other["id"], uid) or time.time() - (other["seen"] or 0) < 60:
         return
     if not gift and time.time() - last_ping.get((cid, other["id"]), 0) < 600:
         return
@@ -444,9 +457,9 @@ def api(method, path, uid, body, query):
         title = clean(body.get("title"), 48)
         if kind not in ("group", "channel") or not title:
             raise HttpError(400, "bad chat")
-        cid = run("INSERT INTO chats (kind, title, about, owner, created, photo, look) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        cid = run("INSERT INTO chats (kind, title, about, owner, created, photo, look, private) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                   kind, title, clean(body.get("about"), 255), uid, now, clean_photo(body.get("photo")),
-                  json.dumps(clean_look(body.get("look"))) if body.get("look") else None)
+                  json.dumps(clean_look(body.get("look"))) if body.get("look") else None, 1 if body.get("private") else None)
         run("INSERT INTO members (chat, user, role, joined) VALUES (?, ?, 'owner', ?)", cid, uid, now)
         service(cid, uid, "created", title=title)
         return chat_out(chat_or_404(cid), uid, True)
@@ -464,21 +477,34 @@ def api(method, path, uid, body, query):
         like = f"%{s}%"
         users = q("""SELECT id FROM users WHERE id<>? AND (ulower(handle) LIKE ? OR ulower(name) LIKE ?)
                      ORDER BY CASE WHEN ulower(handle)=? THEN 0 ELSE 1 END, seen DESC LIMIT 20""", uid, like, like, s)
-        chats = q("""SELECT * FROM chats WHERE kind<>'dm' AND (ulower(title) LIKE ? OR ulower(handle) LIKE ?)
+        chats = q("""SELECT * FROM chats WHERE kind<>'dm' AND private IS NULL AND (ulower(title) LIKE ? OR ulower(handle) LIKE ?)
                      ORDER BY CASE WHEN ulower(handle)=? THEN 0 ELSE 1 END, id DESC LIMIT 20""", like, like, s)
         return {"users": [user_card(u["id"]) for u in users], "chats": [chat_out(c, uid) for c in chats]}
 
     if len(p) == 2 and p[0] == "user" and method == "GET":
-        return user_card(int(p[1]), True)
+        tid = int(p[1])
+        return user_card(tid, True) | {"blocked": blocked(uid, tid)}
+
+    if p == ["block"] and method == "POST":
+        tid = int(body.get("user") or 0)
+        if tid == uid or not q1("SELECT id FROM users WHERE id=?", tid):
+            raise HttpError(400, "bad user")
+        if body.get("on"):
+            run("INSERT OR IGNORE INTO blocks (user, target, at) VALUES (?, ?, ?)", uid, tid, now)
+        else:
+            run("DELETE FROM blocks WHERE user=? AND target=?", uid, tid)
+        return {"blocked": bool(body.get("on"))}
 
     if len(p) >= 2 and p[0] == "chat":
         cid = int(p[1])
         c = chat_or_404(cid)
         me = member(cid, uid)
-        public = c["kind"] != "dm"
-        if not me and not public:
-            raise HttpError(403, "not a member")
         sub = p[2] if len(p) > 2 else ""
+        public = c["kind"] != "dm" and not c["private"]
+        # закрытую группу или канал видит только участник, а приглашённый видит карточку и может вступить
+        guest_ok = c["kind"] != "dm" and invited(cid, uid) and sub in ("", "card", "join")
+        if not me and not public and not guest_ok:
+            raise HttpError(403, "not a member")
 
         if sub == "" and method == "GET":
             return chat_out(c, uid, True)
@@ -517,6 +543,10 @@ def api(method, path, uid, body, query):
             invite = int(body.get("invite") or 0)
             if c["kind"] != "channel" and not can(c, me, "send"):
                 raise HttpError(403, "no rights")
+            if c["kind"] == "dm":
+                peer = q1("SELECT user FROM members WHERE chat=? AND user<>?", cid, uid)
+                if peer and blocked(peer["user"], uid):
+                    raise HttpError(403, "blocked")
             if photo and not can(c, me, "media") and c["kind"] != "channel":
                 raise HttpError(403, "no media")
             limit(uid, "msg", 20, 10)
@@ -533,12 +563,20 @@ def api(method, path, uid, body, query):
                 ic = chat_or_404(invite)
                 if ic["kind"] == "dm":
                     raise HttpError(400, "bad invite")
+                if ic["private"] and not member(invite, uid):
+                    raise HttpError(403, "not a member")
                 mid = post_message(cid, uid, text, None, reply, "invite", {"chat": invite})
             else:
                 if not text:
                     raise HttpError(400, "empty")
                 mid = post_message(cid, uid, text, None, reply)
             return msg_out(q1("SELECT * FROM messages WHERE id=?", mid), {})
+
+        if sub == "mute" and method == "POST":         # без звука: бот не присылает уведомления из этого чата
+            if not me:
+                raise HttpError(403, "not a member")
+            run("UPDATE members SET muted=? WHERE chat=? AND user=?", 1 if body.get("on") else None, cid, uid)
+            return {"muted": bool(body.get("on"))}
 
         if sub == "typing" and method == "POST":
             if me:
@@ -568,8 +606,10 @@ def api(method, path, uid, body, query):
             return {"ok": True}
 
         if sub == "edit" and method == "POST":
-            if not public or not can(c, me, "info"):
+            if c["kind"] == "dm" or not can(c, me, "info"):
                 raise HttpError(403, "no rights")
+            if "private" in body and me and me["role"] == "owner":
+                run("UPDATE chats SET private=? WHERE id=?", 1 if body["private"] else None, cid)
             if "title" in body:
                 t = clean(body["title"], 48)
                 if t and t != c["title"]:
@@ -602,7 +642,7 @@ def api(method, path, uid, body, query):
         if sub == "join" and method == "POST":
             if q1("SELECT 1 x FROM bans WHERE chat=? AND user=?", cid, uid):
                 raise HttpError(403, "banned")
-            if public and not me:
+            if (public or guest_ok) and not me:
                 run("INSERT OR IGNORE INTO members (chat, user, role, joined) VALUES (?, ?, 'member', ?)", cid, uid, now)
                 if c["kind"] == "group":
                     service(cid, uid, "joined")
@@ -624,6 +664,11 @@ def api(method, path, uid, body, query):
             return {"ok": True}
 
         if sub == "members" and method == "GET":
+            # подписчиков канала видят только его админы, участников группы видят её участники
+            if c["kind"] == "channel" and not can(c, me, "ban") and not can(c, me, "promote"):
+                return {"members": [], "banned": []}
+            if c["kind"] == "group" and not me:
+                return {"members": [], "banned": []}
             rows = q("""SELECT user, role, title, rights FROM members WHERE chat=?
                         ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, joined LIMIT 300""", cid)
             return {"members": [{**user_card(r["user"]), "role": r["role"], "title": r["title"] or "", "rights": jload(r["rights"], {})} for r in rows],
@@ -713,6 +758,8 @@ def api(method, path, uid, body, query):
         to, gift = int(body.get("to") or 0), clean(body.get("gift"), 16)
         if to == uid or not admin.gift_ok(gift) or not q1("SELECT id FROM users WHERE id=?", to):
             raise HttpError(400, "bad gift")
+        if blocked(to, uid):
+            raise HttpError(403, "blocked")
         s = admin.settings()
         if not s.get("transfers", True):
             raise HttpError(423, "transfers off")
