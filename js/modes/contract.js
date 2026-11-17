@@ -32,22 +32,24 @@
     if (signing) return;
     const round = A.nextRound(), m = multOf(round.roll);
     signing = true; A.busy = true;
+    // подарки списываем и приз выдаём сразу, анимация только для вида
+    const st = A.takeStake(), bet = st.value;
+    const r = A.payout(bet * m), stats = A.state().stats;
+    stats.contracts++; if (m >= 1) { stats.wins++; stats.best = Math.max(stats.best, r.value); }
+    const entry = { mode: "contract", win: m >= 1, bet, id: r.gift ? r.gift.id : null, mult: m, ...round,
+      text: `Контракт на ${fmt(bet)} звёзд, множитель ${xf(m)}` };
+    A.log(entry, true);
     const board = $("#ctBoard");
     render();
     board.classList.add("sign");               // подарки стягиваются в центр
     A.playDuck($("#ctDuck"), false);
     A.hap.stop();
     await A.wait(A.REDUCED ? 200 : 900);
-    const st = A.takeStake(), bet = st.value;
     A.hap.boom(); A.hap.hit();
     await A.wait(A.REDUCED ? 100 : 600);
     board.classList.remove("sign");
-
-    const r = A.payout(bet * m), stats = A.state().stats;
-    stats.contracts++; if (m >= 1) { stats.wins++; stats.best = Math.max(stats.best, r.value); }
     signing = false; A.busy = false;
-    A.log({ mode: "contract", win: m >= 1, bet, id: r.gift ? r.gift.id : null, mult: m, ...round,
-      text: `Контракт на ${fmt(bet)} звёзд, множитель ${xf(m)}` });
+    A.logShow(entry);
     A.showPrize({ gift: r.gift, uid: r.uid, stars: r.stars, sub: xf(m) });
     render();
   }

@@ -4,7 +4,7 @@
 // Без сервера (локальная проверка) раунды считаются на устройстве, а соперники боты.
 (() => {
   "use strict";
-  const A = window.App, { $, STAR, fmt, fmtS, xf } = A;
+  const A = window.App, { $, STAR, fmt, fmtS, xf, esc, safeUrl } = A;
   const SPEED = 0.09;                       // множитель = e^(SPEED * секунды)
   const BET_MS = 6000, END_MS = 3000;
   const NAMES = ["Артём", "Лиза", "Макс", "Даша", "Тимур", "Ника", "Егор", "Соня", "Марк", "Алина", "Рома", "Вика"];
@@ -110,8 +110,8 @@
       : `<span class="hint-pill">Прошлые раунды появятся здесь</span>`;
   }
   function renderPlayers() {
-    const row = (name, bet, state, cls, tag, photo) => `<div class="row ${cls}"><span class="ava sm ${photo ? "" : "tint"}" style="--h:${(name.length * 47) % 360};${photo ? `background-image:url('${photo}')` : ""}">${photo ? "" : name.charAt(0)}</span>
-      <span class="grow">${name}${tag ? ` <em class="tag">бот</em>` : ""}</span><span class="hint">${STAR} ${fmtS(bet)}</span><b>${state}</b></div>`;
+    const row = (name, bet, state, cls, tag, photo) => (name = String(name || "Игрок"), photo = safeUrl(photo), `<div class="row ${cls}"><span class="ava sm ${photo ? "" : "tint"}" style="--h:${(name.length * 47) % 360};${photo ? `background-image:url('${photo}')` : ""}">${photo ? "" : esc(name.charAt(0))}</span>
+      <span class="grow">${esc(name)}${tag ? ` <em class="tag">бот</em>` : ""}</span><span class="hint">${STAR} ${fmtS(bet)}</span><b>${state}</b></div>`);
     const st = (p) => p.cashed ? `${xf(p.cashed)}` : phase === "end" ? "сгорело" : phase === "fly" ? "в игре" : "готов";
     const cls = (p) => p.cashed ? "cr-ok" : phase === "end" ? "cr-bad" : "";
     let html = my ? row("Вы", my.bet, st(my), cls(my) + " me", false) : "";
@@ -252,7 +252,7 @@
     }
     if (s.my) {
       if (!my) my = { bet: s.my.bet, cashed: 0 };
-      if (s.my.cashed && !my.cashed) { my.cashed = s.my.cashed; onCashed(s.my.cashed, s.my.grant); }   // сработал автовывод
+      if (s.my.cashed && !my.cashed) { my.cashed = s.my.cashed; onCashed(s.my.cashed, s.my.grant, s.my.held); }   // сработал автовывод
     }
     bots = s.bets.filter((b) => b.id !== A.myId).map((b) => ({ name: b.name, photo: b.photo, bet: b.bet, cashed: b.cashed || 0, joined: true }));
     if (s.phase === "fly" && phase === "bet") { phase = "fly"; $("#crashBox").classList.add("fly"); $("#crashNote").textContent = "Летит"; }
@@ -262,6 +262,8 @@
   async function betOnline() {
     const v = A.stakeValue();
     if (phase !== "bet" || my || !v || sending) return;
+    const mb = (A.live && A.live.max_bet) || 100000;
+    if (v > mb) return A.toast(`Максимальная ставка ${fmt(mb)} звёзд`);
     sending = true;
     const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
     try {
@@ -270,7 +272,7 @@
       my = { bet: v, cashed: 0 };
       A.busy = true; A.hap.hit();
       renderPlayers(); renderNow(true); setCta();
-    } catch (e) { A.toast(e.status === 409 ? "Приём ставок закрыт, ждите следующий раунд" : "Нет связи с сервером"); }
+    } catch (e) { A.toast(e.status === 409 ? "Приём ставок закрыт, ждите следующий раунд" : e.status === 400 ? "Проверьте ставку и автовывод: автовывод от ×1,01 до ×999" : "Нет связи с сервером"); }
     finally { sending = false; }
   }
   async function cashOnline() {
@@ -279,18 +281,19 @@
     try {
       const r = await A.api("POST", "/api/crash/cashout", {});
       my.cashed = r.cashed;
-      onCashed(r.cashed, r.grant);
-    } catch (e) { if (e.status === 409) A.toast("Не успели: ракета взорвалась"); }
+      onCashed(r.cashed, r.grant, r.held);
+    } catch (e) { A.toast(e.status === 409 ? "Не успели: ракета взорвалась" : "Не получилось забрать, нажмите ещё раз"); }
     finally { sending = false; }
   }
-  function onCashed(at, grant) {
+  function onCashed(at, grant, held) {
     if (claimedRound === srv.id) return;
     claimedRound = srv.id;
     A.busy = false;
     const stats = A.state().stats; stats.bestCrash = Math.max(stats.bestCrash, at); A.save();
     $("#crashBox").classList.add("won");
     A.log({ mode: "crash", win: true, bet: my.bet, id: null, mult: at, text: `Краш онлайн, забрано на ${xf(at)}. Хеш раунда ${srv.hash.slice(0, 16)}…` });
-    A.claimGrant(grant);                                     // выигрыш выдаёт сервер
+    if (held) A.toast("Крупный выигрыш: придёт после проверки администратором");
+    else A.claimGrant(grant);                                // выигрыш выдаёт сервер
     renderPlayers(); renderNow(true); setCta();
   }
   function boomOnline() {

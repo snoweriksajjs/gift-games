@@ -264,11 +264,15 @@
   async function joinOnline() {
     const v = A.stakeValue();
     if (!v || sending || mine()) return;
+    const mb = (A.live && A.live.max_bet) || 100000;
+    if (v > mb) return A.toast(`Максимальная ставка ${fmt(mb)} звёзд`);
     sending = true;
     const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
     try {
       const st = await A.api("POST", "/api/arena/join", { bet: v, gifts });
-      A.takeStake(); A.hap.hit();
+      const t = A.takeStake(); A.hap.hit();
+      // что списали, запоминаем: при выходе из комнаты ставку возвращает само устройство
+      A.state().arenaStake = { room: st.id, stars: t.stars, gifts: t.gifts.map((g) => g.id) }; A.save();
       onState(st);
     } catch (e) { A.toast(e.status === 409 ? "Комната занята розыгрышем, попробуйте через пару секунд" : "Нет связи с сервером"); }
     finally { sending = false; }
@@ -276,7 +280,17 @@
   async function leaveOnline() {
     if (sending) return;
     sending = true;
-    try { const r = await A.api("POST", "/api/arena/leave", {}); A.busy = false; A.claimGrant(r.grant); A.toast("Ставка вернётся на баланс"); poll(); }
+    try {
+      await A.api("POST", "/api/arena/leave", {});
+      A.busy = false;
+      const s = A.state(), back = s.arenaStake;
+      if (back) {
+        s.balance += back.stars || 0;
+        (back.gifts || []).forEach((id) => A.byId[id] && A.grant(A.byId[id]));
+        s.arenaStake = null; A.save(); A.renderBalance && A.renderBalance(); A.renderStake();
+      }
+      A.toast("Ставка вернулась на баланс"); poll();
+    }
     catch (e) { A.toast("Выйти уже нельзя: розыгрыш начался"); }
     finally { sending = false; }
   }
@@ -312,11 +326,16 @@
     lastWinner = wi; running = false; A.busy = false;
     render(); setHot(-1);
     const me = players.find((p) => p.me);
+    if (me) { A.state().arenaStake = null; A.save(); }
     if (me) {
       A.log({ mode: "arena", win: !!w.me, bet: me.value, id: null, mult: w.me ? st.payout / me.value : 0,
         text: `Арена онлайн, игроков ${players.length}, банк ${fmt(st.total)}, победил ${w.me ? "вы" : w.name}. Число раунда ${st.seed}` });
       await A.wait(A.REDUCED ? 50 : 650);
-      if (w.me) { A.state().stats.arenaWins++; A.claimGrant(st.my_grant); }
+      if (w.me) {
+        A.state().stats.arenaWins++;
+        if (st.my_held) A.toast("Крупный выигрыш: придёт после проверки администратором");
+        else A.claimGrant(st.my_grant);
+      }
       else A.showMiss(`Победил ${w.name}`, `−${fmt(me.value)} ${STAR}`);
     }
     A.renderStake();

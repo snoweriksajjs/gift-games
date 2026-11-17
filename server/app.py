@@ -15,6 +15,11 @@
 Только стандартная библиотека Python 3.9+.
 """
 import base64, hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.parse, urllib.request
+
+
+def no_nan(c):
+    """NaN и Infinity в запросе не принимаем: иначе ответы сервера перестают быть JSON."""
+    raise ValueError("bad number " + c)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -368,7 +373,7 @@ def save_jpeg(data_url, max_bytes=700_000):
 
 # ---------- обработчики ----------
 def api(method, path, uid, body, query):
-    p = path.strip("/").split("/")[1:]          # без "api"
+    p = [urllib.parse.unquote(x) for x in path.strip("/").split("/")[1:]]   # без "api"; кириллица в кодах промокодов
     now = int(time.time())
     r = admin.handle(method, p, uid, body, query, now)   # настройки, промокоды, задания, выдачи, админка
     if r is None:
@@ -390,7 +395,7 @@ def api(method, path, uid, body, query):
         for k, v in sets:
             run(f"UPDATE users SET {k}=? WHERE id=?", v, uid)
         pending = q1("SELECT COUNT(*) n FROM transfers WHERE to_user=? AND claimed IS NULL", uid)["n"]
-        grants = q1("SELECT COUNT(*) n FROM grants WHERE user=? AND claimed IS NULL", uid)["n"]
+        grants = q1("SELECT COUNT(*) n FROM grants WHERE user=? AND claimed IS NULL AND hold IS NULL", uid)["n"]
         return {"me": user_card(uid, True), "pending": pending, "grants": grants, "admin": uid in admin.ADMINS}
 
     if p == ["handle"] and method == "GET":
@@ -706,8 +711,15 @@ def api(method, path, uid, body, query):
     if p == ["gift", "send"] and method == "POST":
         limit(uid, "gift", 10, 60)
         to, gift = int(body.get("to") or 0), clean(body.get("gift"), 16)
-        if to == uid or not GIFT_ID.match(gift) or not q1("SELECT id FROM users WHERE id=?", to):
+        if to == uid or not admin.gift_ok(gift) or not q1("SELECT id FROM users WHERE id=?", to):
             raise HttpError(400, "bad gift")
+        s = admin.settings()
+        if not s.get("transfers", True):
+            raise HttpError(423, "transfers off")
+        # владение подарком сервер пока проверить не может (инвентарь на устройстве), поэтому ограничиваем масштаб
+        day = (q1("SELECT COUNT(*) n FROM transfers WHERE from_user=? AND created>?", uid, now - 86400) or {}).get("n", 0)
+        if day >= int(s.get("transfers_day", 10)):
+            raise HttpError(429, "daily limit")
         c = dm_chat(uid, to)
         mid = post_message(c["id"], uid, clean(body.get("text"), 255), gift, kind="gift", data={"to": to})
         run("INSERT INTO transfers (from_user, to_user, gift, msg, created) VALUES (?, ?, ?, ?, ?)", uid, to, gift, mid, now)
@@ -751,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Max-Age", "86400")
 
     def reply(self, code, obj):
-        data = json.dumps(obj, ensure_ascii=False).encode()
+        data = json.dumps(obj, ensure_ascii=False, allow_nan=False).encode()
         self.send_response(code)
         self.cors()
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -802,7 +814,7 @@ class Handler(BaseHTTPRequestHandler):
                 big = url.path in ("/api/upload",) or url.path.endswith("/share")
                 if n > (1_300_000 if big else 32768):
                     raise HttpError(413, "too big")
-                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                body = json.loads(self.rfile.read(n) or b"{}", parse_constant=no_nan) if n else {}
                 if not isinstance(body, dict):
                     raise HttpError(400, "bad body")
             self.reply(200, api(method, url.path, uid, body, urllib.parse.parse_qs(url.query)))

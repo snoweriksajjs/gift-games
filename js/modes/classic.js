@@ -53,7 +53,17 @@
     const round = A.nextRound(), win = round.roll < ch;
     spinning = true; A.busy = true;
     $("#mode-classic .stake-slot").classList.add("loading");
-    const st = A.takeStake(), bet = st.value;
+    const st = A.takeStake(), bet = st.value, stats = A.state().stats;
+    // итог записываем до анимации: если закрыть приложение во время прокрутки, выигрыш уже на месте
+    let uid = null;
+    if (win) {
+      stats.wins++; stats.best = Math.max(stats.best, tgt.price); if (ch < 0.25) stats.lowWins++;
+      stats.won = (stats.won || 0) + tgt.price;
+      uid = A.grant(tgt);
+    }
+    const entry = { mode: "classic", win, bet, id: tgt.id, mult: tgt.price / bet, ...round,
+      text: `Апгрейд, шанс ${pct(ch)}. Для выигрыша нужно число меньше ${(ch * 100).toFixed(3).replace(".", ",")}` };
+    A.log(entry, true);
     dial.setText(null, "крутится");
     render(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -61,19 +71,13 @@
 
     dial.mark(win ? "win" : "lose");
     dial.setText(null, win ? "ваш" : "мимо");
-    const stats = A.state().stats;
     spinning = false; A.busy = false;
     $("#mode-classic .stake-slot").classList.remove("loading");
-    A.log({ mode: "classic", win, bet, id: tgt.id, mult: tgt.price / bet, ...round,
-      text: `Апгрейд, шанс ${pct(ch)}. Для выигрыша нужно число меньше ${(ch * 100).toFixed(3).replace(".", ",")}` });
+    A.logShow(entry);
     if (win) {
-      stats.wins++; stats.best = Math.max(stats.best, tgt.price); if (ch < 0.25) stats.lowWins++;
-      stats.won = (stats.won || 0) + tgt.price;
-      const uid = A.grant(tgt);
       target = null; gotId = tgt.id; activeMult = null;
       A.showPrize({ gift: tgt, uid, sub: xf(tgt.price / bet) });
     } else {
-      A.save();
       A.showMiss("Не выпало", `−${fmt(bet)} ${STAR}`);
     }
     A.renderStake(); render(true);

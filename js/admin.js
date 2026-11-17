@@ -64,10 +64,14 @@
   // ---------- обзор ----------
   async function home() {
     loading();
-    let d;
-    try { d = await api("GET", "/api/admin/stats"); } catch (e) { return fail(e); }
+    let d, held = [];
+    try { d = await api("GET", "/api/admin/stats"); held = (await api("GET", "/api/admin/held")).held || []; } catch (e) { return fail(e); }
     const k = (v, l, accent) => `<div class="adm-kpi ${accent || ""}"><b>${v}</b><span>${l}</span></div>`;
-    body().innerHTML = `<h4 class="adm-h">Игроки</h4><div class="adm-grid">
+    const heldHtml = held.length ? `<h4 class="adm-h">Крупные выигрыши на проверке</h4><section class="list">${held.map((h) => `<div class="row adm-line">
+        <span class="grow"><b data-uid="${h.user}">${esc(h.player.name)}</b><span class="hint"> ${esc(h.note || "")} · ${ago(h.created)}</span></span>
+        <b class="adm-bal">${STAR}${fmt(h.amount)}</b><button class="mini-btn" data-held="${h.id}" data-do="release">Выдать</button><button class="mini-btn" data-held="${h.id}" data-do="reject">Отклонить</button></div>`).join("")}</section>
+      <p class="adm-note">Онлайн-ставки сервер пока не может сверить с балансом. Выдавайте, если игрок реально пополнял баланс или давно играет честно.</p>` : "";
+    body().innerHTML = `${heldHtml}<h4 class="adm-h">Игроки</h4><div class="adm-grid">
         ${k(fmt(d.users), "всего")}${k(fmt(d.online), "онлайн", "ok")}${k(fmt(d.active_day), "за сутки")}${k(fmt(d.active_week), "за неделю")}
         ${k(fmt(d.new_day), "новых за сутки", "ok")}${k(fmt(d.new_week), "новых за неделю")}${k(fmt(d.bot_users), "в боте")}${k(fmt(d.banned), "в бане", "bad")}</div>
       <h4 class="adm-h">Деньги</h4><div class="adm-grid">
@@ -76,7 +80,16 @@
         ${k(fmt(d.messages), "сообщений")}${k(fmt(d.chats), "групп")}${k(fmt(d.channels), "каналов")}${k(fmt(d.transfers), "передач подарков")}
         ${k(fmt(d.promo_uses), "промокодов")}${k(fmt(d.tasks_done), "заданий")}</div>
       <h4 class="adm-h">Топ по балансу</h4><section class="list">${d.top.map((u, i) => `<button class="row adm-user" data-uid="${u.id}"><i class="adm-n">${i + 1}</i><span class="grow"><b>${esc(u.name)}</b><span>${u.handle ? "@" + esc(u.handle) : "ID " + u.id}</span></span><b class="adm-bal">${STAR}${fmt(u.balance)}</b></button>`).join("") || `<div class="row">Пока пусто</div>`}</section>`;
-    body().onclick = (e) => { const r = e.target.closest("[data-uid]"); if (r) userCard(Number(r.dataset.uid)); };
+    body().onclick = async (e) => {
+      const h = e.target.closest("[data-held]");
+      if (h) {
+        if (h.dataset.do === "reject" && !confirm("Отклонить выигрыш? Игрок его не получит.")) return;
+        h.disabled = true;
+        try { await api("POST", `/api/admin/held/${h.dataset.held}/${h.dataset.do}`, {}); toast(h.dataset.do === "release" ? "Выигрыш выдан" : "Отклонено"); } catch (er) { toast("Уже обработано"); }
+        return home();
+      }
+      const r = e.target.closest("[data-uid]"); if (r) userCard(Number(r.dataset.uid));
+    };
   }
 
   // ---------- игроки ----------
@@ -132,7 +145,7 @@
       <h4 class="adm-h">Сообщение от бота</h4>
       <section class="list adm-form"><textarea id="auMsg" rows="3" placeholder="Текст, можно с HTML-разметкой"></textarea><div class="adm-btns"><button data-act="msg">Отправить</button></div></section>
       ${gifts.length ? `<h4 class="adm-h">Подарки</h4><div class="adm-gifts">${gifts.map((g) => `<span class="adm-gift" style="${A.bg(byId[g])}"><i class="pat"></i>${A.pic(byId[g])}</span>`).join("")}</div>` : ""}
-      ${u.grants.length ? `<h4 class="adm-h">Выдачи</h4><section class="list">${u.grants.map((g) => `<div class="row adm-line"><span class="grow">${g.kind === "gift" && byId[g.gift] ? esc(byId[g.gift].gift) : g.kind === "set" ? "Баланс = " + fmt(g.amount) : (g.amount > 0 ? "+" : "") + fmt(g.amount)}${g.wager ? ` · ×${g.wager}` : ""}</span><span class="hint">${g.claimed ? "получено" : "ждёт"}</span></div>`).join("")}</section>` : ""}
+      ${u.grants.length ? `<h4 class="adm-h">Выдачи</h4><section class="list">${u.grants.map((g) => `<div class="row adm-line"><span class="grow">${g.kind === "gift" && byId[g.gift] ? esc(byId[g.gift].gift) : g.kind === "set" ? "Баланс = " + fmt(g.amount) : (g.amount > 0 ? "+" : "") + fmt(g.amount)}${g.wager ? ` · ×${g.wager}` : ""}</span><span class="hint">${g.hold ? "на проверке" : g.claimed ? "получено" : "ждёт"}</span></div>`).join("")}</section>` : ""}
       <section class="list"><button class="row pn-row ${u.banned ? "" : "danger"}" data-act="ban">${u.banned ? "Разблокировать" : "Заблокировать игрока"}</button></section>`;
     body().onclick = async (e) => {
       const c = e.target.closest("[data-copy]"); if (c) { navigator.clipboard && navigator.clipboard.writeText(c.dataset.copy); return toast("ID скопирован"); }
@@ -321,11 +334,15 @@
         <label class="row pn-row"><span class="grow">Пополнение звёздами</span><input type="checkbox" class="sw" data-k="deposits" ${s.deposits ? "checked" : ""}></label>
         <label class="row pn-row"><span class="grow">Бесплатное яйцо раз в день</span><input type="checkbox" class="sw" data-k="free_egg" ${s.free_egg ? "checked" : ""}></label>
         <label class="row pn-row"><span class="grow">Технические работы</span><input type="checkbox" class="sw" data-k="maintenance" ${s.maintenance ? "checked" : ""}></label>
+        <label class="row pn-row"><span class="grow">Передача подарков между игроками</span><input type="checkbox" class="sw" data-k="transfers" ${s.transfers !== false ? "checked" : ""}></label>
       </section>
       <section class="list adm-form">
         <label class="adm-lab">Текст на экране техработ</label><input id="asMaint" value="${esc(s.maint_text)}" maxlength="200">
         <label class="adm-lab">Надпись на кнопке вывода</label><input id="asWd" value="${esc(s.withdraw_note)}" maxlength="200">
         <label class="adm-lab">Бонус за приглашённого друга, звёзд</label><input id="asRef" type="number" inputmode="numeric" value="${s.ref_bonus}">
+        <label class="adm-lab">Максимальная ставка в Краше и на Арене, звёзд</label><input id="asMaxBet" type="number" inputmode="numeric" value="${s.max_bet || 100000}">
+        <label class="adm-lab">Онлайн-выигрыш больше этой суммы ждёт вашей проверки, звёзд</label><input id="asHold" type="number" inputmode="numeric" value="${s.hold_over || 50000}">
+        <label class="adm-lab">Сколько подарков игрок может передать за сутки</label><input id="asTrDay" type="number" inputmode="numeric" value="${s.transfers_day ?? 10}">
       </section>
       <div class="adm-btns"><button data-act="save" class="main">Сохранить</button></div>`;
     const syncR = (v) => { v = Math.max(0, Math.min(100, Math.round(Number(v) || 0))); $("#asRtp").value = v; $("#asRtpN").value = v; $("#asRv").textContent = v + "%"; $("#asEdge").textContent = 100 - v + "%"; };
@@ -342,7 +359,8 @@
       const flags = {};
       all("[data-k]", body()).forEach((i) => (flags[i.dataset.k] = i.checked));
       try {
-        await api("POST", "/api/admin/settings", { rtp: Number($("#asRtp").value) / 100, modes, ...flags, star_usd: Number($("#asStar").value) || 0.015, maint_text: $("#asMaint").value, withdraw_note: $("#asWd").value, ref_bonus: Number($("#asRef").value) || 0 });
+        await api("POST", "/api/admin/settings", { rtp: Number($("#asRtp").value) / 100, modes, ...flags, star_usd: Number($("#asStar").value) || 0.015, maint_text: $("#asMaint").value, withdraw_note: $("#asWd").value, ref_bonus: Number($("#asRef").value) || 0,
+          max_bet: Number($("#asMaxBet").value) || 100000, hold_over: Number($("#asHold").value) || 50000, transfers_day: Number($("#asTrDay").value) || 0 });
         hap.win(); toast("Настройки сохранены");
       } catch (er) { fail(er); }
     };

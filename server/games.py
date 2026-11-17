@@ -5,8 +5,12 @@
 Выигрыш выдаётся через «выдачи» (таблица grants): игрок получит его, даже если закрыл приложение посреди раунда.
 
 Ставка списывается на устройстве игрока, сервер знает только её сумму (как и весь баланс в приложении).
+Пока баланс не переехал на сервер, ущерб от поддельных ставок ограничен: потолок ставки (max_bet),
+выход из Арены без выдачи звёзд, крупные выигрыши (hold_over) ждут подтверждения админа.
 """
 import hashlib, json, math, os, secrets, threading, time
+
+import catalog
 
 G = {}
 lock = threading.RLock()
@@ -16,7 +20,21 @@ CRASH_BET_MS, CRASH_END_MS = 8000, 3500
 ARENA_GATHER_MS = 25000          # сколько ждём соперников после первой ставки
 ARENA_SHOW_MS = 16500            # отсчёт, удар, полёт мяча и показ победителя
 ARENA_FLY_MS = 8000              # полёт мяча одинаковый у всех игроков
-MAX_BET = 10 ** 9
+
+
+def max_bet():
+    return int(G["admin"].settings().get("max_bet") or 100000)
+
+
+def bet_of(body, key="bet"):
+    """Целая ставка от 1 до max_bet, иначе 400 (бесконечность, текст и дроби отклоняются)."""
+    v = body.get(key)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v != int(v):
+        raise G["HttpError"](400, "bad bet")
+    v = int(v)
+    if not 1 <= v <= max_bet():
+        raise G["HttpError"](400, "bad bet")
+    return v
 
 
 def bind(g):
@@ -44,14 +62,11 @@ def card(uid):
 
 
 def give_win(uid, value, note):
-    """Выигрыш через выдачу: приложение превратит сумму в подарок и сдачу звёздами."""
-    return G["run"]("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, 'win', ?, NULL, 0, ?, ?)",
-                    uid, int(value), note, int(time.time()))
-
-
-def give_back(uid, value, note):
-    return G["run"]("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, 'add', ?, NULL, 0, ?, ?)",
-                    uid, int(value), note, int(time.time()))
+    """Выигрыш через выдачу: приложение превратит сумму в подарок и сдачу звёздами.
+    Крупный выигрыш получает отметку hold: игрок получит его после подтверждения админом."""
+    hold = 1 if int(value) > int(G["admin"].settings().get("hold_over") or 50000) else None
+    return G["run"]("INSERT INTO grants (user, kind, amount, gift, wager, note, created, hold) VALUES (?, 'win', ?, NULL, 0, ?, ?, ?)",
+                    uid, int(value), note, int(time.time()), hold), bool(hold)
 
 
 # ---------- лента выигрышей ----------
@@ -88,7 +103,7 @@ def crash_cash(uid, at):
         return None
     b["cashed"] = round(at, 2)
     value = int(b["bet"] * b["cashed"])
-    b["grant"] = give_win(uid, value, f"Краш ×{b['cashed']:.2f}".replace(".", ","))
+    b["grant"], b["held"] = give_win(uid, value, f"Краш ×{b['cashed']:.2f}".replace(".", ","))
     to_feed(uid, "crash", value, b["cashed"])
     return b
 
@@ -123,7 +138,7 @@ def crash_state(uid):
         out.update({"cp": c["cp"], "seed": c["seed"]})
     mine = c["bets"].get(uid)
     if mine:
-        out["my"] = {"bet": mine["bet"], "cashed": mine["cashed"], "auto": mine["auto"], "grant": mine.get("grant")}
+        out["my"] = {"bet": mine["bet"], "cashed": mine["cashed"], "auto": mine["auto"], "grant": mine.get("grant"), "held": mine.get("held", False)}
     return out
 
 
@@ -157,7 +172,7 @@ def arena_tick(t):
         payout = int(total * rtp("arena"))
         w = arena["players"][wi]
         arena.update({"phase": "play", "play_at": t, "winner": wi, "payout": payout, "total": total})
-        arena["grant"] = give_win(w["id"], payout, f"Арена, банк {total}")
+        arena["grant"], arena["held"] = give_win(w["id"], payout, f"Арена, банк {total}")
         to_feed(w["id"], "arena", payout, payout / max(1, w["value"]))
     elif ph == "play" and t >= arena["play_at"] + ARENA_SHOW_MS:
         arena_hist.insert(0, {"winner": card(arena["players"][arena["winner"]]["id"])["name"], "total": arena["total"]})
@@ -174,6 +189,7 @@ def arena_state(uid):
         out.update({"winner": a["winner"], "seed": a["seed"], "payout": a["payout"], "total": a["total"]})
         if a["players"][a["winner"]]["id"] == uid:
             out["my_grant"] = a.get("grant")
+            out["my_held"] = a.get("held", False)
     return out
 
 
@@ -207,10 +223,12 @@ def handle(method, p, uid, body, query, now):
                 raise err(409, "betting closed")
             if uid in crash["bets"]:
                 raise err(409, "already in")
-            bet = int(body.get("bet") or 0)
-            if not 1 <= bet <= MAX_BET:
-                raise err(400, "bad bet")
-            auto = float(body.get("auto") or 0)
+            bet = bet_of(body)
+            auto = body.get("auto") or 0
+            if isinstance(auto, bool) or not isinstance(auto, (int, float)) or not math.isfinite(auto) or auto < 0:
+                raise err(400, "bad auto")
+            if auto >= 1000:                         # точка краша не выше ×1000: такой автовывод не сработал бы никогда
+                raise err(400, "auto too high")
             crash["bets"][uid] = {"bet": bet, "auto": round(auto, 2) if auto >= 1.01 else 0, "cashed": None,
                                   "gift": (clean_gifts(body.get("gifts")) or [None])[0]}
             return crash_state(uid)
@@ -223,7 +241,7 @@ def handle(method, p, uid, body, query, now):
             b = crash_cash(uid, m)
             if not b:
                 raise err(409, "no bet")
-            return {"cashed": b["cashed"], "grant": b["grant"], "value": int(b["bet"] * b["cashed"])}
+            return {"cashed": b["cashed"], "grant": b["grant"], "held": b["held"], "value": int(b["bet"] * b["cashed"])}
 
         if p == ["arena"] and method == "GET":
             return arena_state(uid)
@@ -235,9 +253,7 @@ def handle(method, p, uid, body, query, now):
                 raise err(409, "already in")
             if len(arena["players"]) >= 12:
                 raise err(409, "room full")
-            value = int(body.get("bet") or 0)
-            if not 1 <= value <= MAX_BET:
-                raise err(400, "bad bet")
+            value = bet_of(body)
             arena["players"].append({"id": uid, "value": value, "gifts": clean_gifts(body.get("gifts"))})
             if arena["phase"] == "wait":
                 arena.update({"phase": "gather", "ends_at": now_ms() + ARENA_GATHER_MS})
@@ -251,10 +267,10 @@ def handle(method, p, uid, body, query, now):
             if not me:
                 raise err(409, "not in")
             arena["players"].remove(me)
-            g = give_back(uid, me["value"], "Возврат ставки на арене")
             if not arena["players"]:
                 arena_new()
-            return {"grant": g}
+            # ставку списало устройство игрока, оно её и вернёт: сервер звёзд не выдаёт (иначе выход печатал бы деньги)
+            return {"ok": True, "value": me["value"]}
 
         if p == ["feed"] and method == "GET":
             online = (G["q1"]("SELECT COUNT(*) n FROM users WHERE seen>?", int(time.time()) - 180) or {}).get("n", 0)
@@ -266,10 +282,14 @@ def handle(method, p, uid, body, query, now):
             mode = body.get("mode")
             if mode not in ("classic", "streak", "contract", "egg"):
                 raise err(400, "bad mode")
-            value = int(body.get("value") or 0)
-            if value <= 0 or value > MAX_BET:
+            value, mult = body.get("value"), body.get("mult") or 0
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 1 <= value <= 10 ** 7:
                 raise err(400, "bad value")
+            if isinstance(mult, bool) or not isinstance(mult, (int, float)) or not math.isfinite(mult) or not 0 <= mult <= 10000:
+                raise err(400, "bad mult")
             gift = (clean_gifts([body.get("gift")]) or [None])[0]
-            to_feed(uid, mode, value, float(body.get("mult") or 0) or None, gift)
+            if gift and not catalog.parse(gift):
+                gift = None
+            to_feed(uid, mode, int(value), float(mult) or None, gift)
             return {"ok": True}
     raise err(404, "not found")

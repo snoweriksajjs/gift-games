@@ -7,7 +7,6 @@
   const REF_BONUS = 100;               // звёзд за друга, который сделал первую игру
   const SITE = "https://snoweriksajjs.github.io/gift-games";   // публичный адрес, нужен для карточек в сторис
   const ADMIN_ID = 8083284748;         // кому показывается админ-панель
-  const CODE_KEY = "duckchance-codes-v1";   // ключ подписи промокодов. Он виден в коде сайта: с сервером подпись переедет туда
   // Настройки из админки. Сервер присылает их при каждом запуске, а применяются они со следующего запуска:
   // шансы режимов считаются один раз при загрузке.
   const CFG = (() => { try { return JSON.parse(localStorage.getItem("dc_cfg")) || {}; } catch { return {}; } })();
@@ -102,22 +101,61 @@
   };
 
   // ---------- состояние ----------
-  const STORE_KEY = "giftup_v2";
+  // у каждого аккаунта Telegram своё сохранение (раньше один ключ на всех, и аккаунты на одном устройстве смешивались)
+  const OLD_KEY = "giftup_v2";
+  const devAs = !inTg && /^(127\.0\.0\.1|localhost)$/.test(location.hostname) ? new URLSearchParams(location.search).get("as") : null;
+  const STORE_KEY = user ? `giftup_v2_${user.id}` : devAs ? `giftup_v2_dev${devAs}` : OLD_KEY;
   const freshState = () => ({ balance: 0, inv: [], history: [], uidSeq: 1, haptics: true, fast: false,
     fair: { ...Fair.newSeed(), clientSeed: randHex(8), nonce: 0 } });
+  // битое или неполное сохранение чиним по полям, а не падаем (иначе вечная заставка)
+  function normalize(s) {
+    const f = freshState();
+    if (!s || typeof s !== "object" || Array.isArray(s)) return f;
+    if (!Array.isArray(s.inv)) s.inv = [];
+    s.inv = s.inv.filter((it) => it && typeof it === "object" && typeof it.id === "string" && Number.isFinite(it.uid));
+    if (!Array.isArray(s.history)) s.history = [];
+    s.history = s.history.filter((h) => h && typeof h === "object");
+    if (!Number.isFinite(s.balance) || s.balance < 0) s.balance = 0;
+    const maxUid = s.inv.reduce((m, it) => Math.max(m, it.uid), 0);
+    if (!Number.isFinite(s.uidSeq) || s.uidSeq <= maxUid) s.uidSeq = maxUid + 1;
+    if (!s.fair || typeof s.fair !== "object" || typeof s.fair.serverSeed !== "string" || !Number.isFinite(s.fair.nonce)) s.fair = f.fair;
+    if (s.stats && typeof s.stats !== "object") s.stats = {};
+    if (s.claimed && typeof s.claimed !== "object") s.claimed = {};
+    return s;
+  }
   let state = (() => {
-    try { const raw = localStorage.getItem(STORE_KEY); if (raw) return JSON.parse(raw); } catch {}
+    try {
+      let raw = localStorage.getItem(STORE_KEY);
+      if (!raw && STORE_KEY !== OLD_KEY && !devAs) raw = localStorage.getItem(OLD_KEY);   // переезд со старого общего ключа
+      if (raw) return normalize(JSON.parse(raw));
+    } catch {}
     return freshState();
   })();
   state.stats = Object.assign({ spins: 0, wins: 0, best: 0, wagered: 0, lowWins: 0, bestStreak: 0, bestCrash: 0, arenaWins: 0, contracts: 0 }, state.stats);
   state.claimed = state.claimed || {};
   // неизвестные подарки только прячем: если каталог не загрузился, коллекция игрока не должна пропасть
   if (Cat) state.inv = state.inv.filter((it) => byId[it.id] || !/^(g\d+|c\d+\.\d+\.\d+)$/.test(it.id));
-  const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch {} };
+  // приложение открыто в двух окнах: играет только одно, иначе окна затирают сохранения друг друга
+  const TAB_ID = randHex(6), LEASE = STORE_KEY + "_tab";
+  let inactive = false;
+  const save = () => { if (inactive) return; try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch {} };
+  try { localStorage.setItem(LEASE, TAB_ID); } catch {}
+  window.addEventListener("storage", (e) => {
+    if (e.key !== LEASE || !e.newValue || e.newValue === TAB_ID || inactive) return;
+    inactive = true;
+    const el = document.createElement("div");
+    el.className = "lock-screen"; el.id = "tabLock";
+    el.innerHTML = `<b>DuckChance открыт в другом окне</b><p>Играть можно только в одном окне, иначе выигрыши могут потеряться.</p><button class="mini-btn" id="tabHere">Играть здесь</button>`;
+    document.body.appendChild(el);
+    el.querySelector("#tabHere").onclick = () => location.reload();
+  });
 
   // ---------- мелочи ----------
   const $ = (s, root = document) => root.querySelector(s);
   const all = (s, root = document) => root.querySelectorAll(s);
+  // всё, что пришло от игроков или из админки, вставляем в HTML только через esc
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const safeUrl = (u) => (typeof u === "string" && /^https:\/\/[^\s'"()<>\\]+$/.test(u) ? u : "");
   const STAR = `<svg class="star"><use href="#star"/></svg>`;
   const fmt = (n) => Math.round(n).toLocaleString("ru-RU");
   const fmtS = (n) => n >= 1e6 ? (n / 1e6).toFixed(2).replace(/\.?0+$/, "").replace(".", ",") + "M" : n >= 1e5 ? Math.round(n / 1000) + "K" : fmt(n);
@@ -594,15 +632,20 @@
 
   // ---------- история: кружки как сторис ----------
   const MODE_DUCK = { classic: "chart", streak: "fire", contract: "wizard", arena: "ball", crash: "rocket", egg: "hatch" };
-  function log(entry) {
+  // quiet: записать раунд до анимации, не показывая итог; показать потом через logShow(entry)
+  function log(entry, quiet) {
+    state.history.unshift(entry);
+    state.history = state.history.slice(0, 50);
+    save();
+    if (!quiet) logShow(entry);
+  }
+  function logShow(entry) {
     // выигрыш в одиночном режиме попадает в общую ленту (краш и арену сервер добавляет сам)
     if (entry.win && App.reportWin && ["classic", "streak", "contract", "egg"].includes(entry.mode)) {
       const g = entry.id && byId[entry.id];
       App.reportWin(entry.mode, g ? g.price : Math.round((entry.bet || 0) * (entry.mult || 0)), entry.id || null, entry.mult);
     }
-    state.history.unshift(entry);
-    state.history = state.history.slice(0, 50);
-    save(); renderFeed(true); renderTasks();
+    renderFeed(true); renderTasks();
   }
   function renderFeed(fresh) {
     $("#feed").hidden = !state.history.length;
@@ -629,7 +672,7 @@
       verifyBox.classList.toggle("bad", !ok);
       verifyBox.innerHTML = `
         <b>${ok ? "Результат подтверждён" : "Проверка не прошла"}</b>
-        <span>Раунд №${h.nonce}. ${h.text}</span>
+        <span>Раунд №${esc(h.nonce)}. ${esc(h.text)}</span>
         <span>Число раунда: ${(r * 100).toFixed(3).replace(".", ",")}</span>
         <span>Серверный сид: <code>${h.serverSeed}</code></span>
         <span>Хэш до раунда ${hashOk ? "совпадает" : "не совпадает"}: <code>${h.hash}</code></span>
@@ -661,9 +704,9 @@
     hap.soft();
     tg.openInvoice(INVOICES[n], (status) => {
       if (status === "paid") {
-        state.balance += n; (state.deposits = state.deposits || []).push({ n, t: Date.now() }); save();
-        closeSheet(); hap.coin(); renderBalance(true); renderStake();
-        toast(`Баланс пополнен на ${fmt(n)} звёзд`);
+        // звёзды начисляет сервер (бот получил оплату и поставил выдачу): забираем её, пока не придёт
+        closeSheet(); toast("Оплата прошла, зачисляем звёзды…");
+        [700, 2000, 5000, 12000].forEach((ms) => setTimeout(() => App.claimGrants && App.claimGrants(), ms));
       } else if (status === "failed") toast("Оплата не прошла");
     });
   }
@@ -805,7 +848,7 @@
       <div class="task ${done ? "done" : ""}">
         <span class="duck lg" data-duck="${t.duck}"></span>
         <div class="t-main">
-          <span class="t-title">${t.title}</span>
+          <span class="t-title">${esc(t.title)}</span>
           <span class="t-sub">+${fmt(t.reward)} ${STAR}${t.goal > 1 && !done ? ` <span>${cur} из ${t.goal}</span>` : ""}</span>
           ${t.goal > 1 && !done ? `<span class="t-bar"><i style="width:${(cur / t.goal) * 100}%"></i></span>` : ""}
         </div>
@@ -866,25 +909,13 @@
     $("#refEarned").textContent = fmt(state.refEarned || 0);
   }
 
-  // ---------- коды: промокоды и бонусы за друзей ----------
-  // Код: ВИД-СУММА-НОМЕР-ПОДПИСЬ. Вид P это промокод, R это бонус за друга.
-  // Подпись считается от ключа CODE_KEY. Код срабатывает один раз на устройстве.
-  const signCode = (kind, amount, nonce) => hex(hmac(CODE_KEY, enc(`${kind}:${amount}:${nonce}`))).slice(0, 10);
-  const makeCode = (kind, amount, nonce) => `${kind}-${amount}-${nonce}-${signCode(kind, amount, nonce)}`;
+  // ---------- коды ----------
+  // Старые подписанные коды (P-… и R-…) больше не принимаются: ключ подписи был виден в коде сайта,
+  // и коды можно было подделать. Промокоды проверяет сервер, бонус за друга начисляет бот выдачей.
+  const makeCode = () => "";
   function redeemCode(raw, quiet) {
-    const m = /^([PR])-(\d{1,7})-([A-Za-z0-9]{1,24})-([0-9a-f]{10})$/.exec(String(raw || "").trim());
-    const fail = (t) => { if (!quiet) { toast(t); hap.lose(); } return false; };
-    if (!m) return fail("Такого кода нет");
-    const [, kind, amountS, nonce, sig] = m, amount = Number(amountS);
-    if (signCode(kind, amount, nonce) !== sig || !amount) return fail("Такого кода нет");
-    state.codes = state.codes || [];
-    if (state.codes.includes(m[0])) return fail("Этот код уже использован");
-    state.codes.push(m[0]);
-    state.balance += amount;
-    if (kind === "R") { state.refs = (state.refs || 0) + 1; state.refEarned = (state.refEarned || 0) + amount; }
-    save(); hap.coin(); renderBalance(true); renderStake(); renderFriends(); renderTasks();
-    toast(kind === "R" ? `+${fmt(amount)} звёзд за друга` : `Промокод: +${fmt(amount)} звёзд`);
-    return true;
+    if (!quiet) { toast("Этот код устарел. Промокоды вводятся на странице заданий"); hap.lose(); }
+    return false;
   }
   // бот открывает приложение со ссылкой вида ?code=... или ?ref=...
   function readLaunch() {
@@ -896,8 +927,6 @@
     if (open === "egg" && modes.egg) setTimeout(() => showMode("egg"), 300);
     if (open === "chats") setTimeout(() => showTab("pageChats"), 300);
     if (open === "profile") setTimeout(() => showTab("pageProfile"), 300);
-    const code = q.get("code");
-    if (code) setTimeout(() => redeemCode(code, (state.codes || []).includes(code)), 1400);
   }
 
   // ---------- награды с сервера: промокоды и выдачи админа ----------
@@ -911,6 +940,8 @@
       showPrize({ gift: res.gift, uid: res.uid, stars: res.stars, sub: r.note || "" });
       return res;
     }
+    if (r.kind === "pay") { (state.deposits = state.deposits || []).push({ n: r.amount, t: Date.now() }); r = { ...r, kind: "add" }; }
+    if (r.kind === "add" && /^За приглашённого друга/.test(r.note || "")) { state.refs = (state.refs || 0) + 1; state.refEarned = (state.refEarned || 0) + r.amount; r = { ...r, kind: "add" }; renderFriends(); }
     if (r.kind === "stars" || r.kind === "add") { state.balance = Math.max(0, state.balance + r.amount); value = Math.abs(r.amount); text = `${r.amount >= 0 ? "+" : ""}${fmt(r.amount)} звёзд`; }
     else if (r.kind === "set") { value = Math.max(0, r.amount - state.balance); state.balance = Math.max(0, r.amount); text = `Баланс: ${fmt(r.amount)} звёзд`; }
     else if ((r.kind === "gift") && byId[r.gift]) { grant(byId[r.gift]); value = byId[r.gift].price; text = `${byId[r.gift].gift} (${byId[r.gift].model})`; }
@@ -1029,7 +1060,7 @@
       const v = $("#promoInput").value.trim();
       const done = () => { $("#promoInput").value = ""; $("#promoInput").blur(); };
       if (!v) return toast("Введите промокод");
-      if (/^[PR]-\d+-[A-Za-z0-9]+-[0-9a-f]{10}$/.test(v) || !App.redeemPromo) { if (redeemCode(v)) done(); return; }
+      if (!App.redeemPromo) return toast("Промокоды работают внутри Telegram");
       App.redeemPromo(v).then(done, (msg) => { toast(msg); hap.lose(); });
     });
   }
@@ -1059,10 +1090,7 @@
       toast(`Выдан ${g.gift} (${g.model})`);
     });
     $("#admCode").addEventListener("click", () => {
-      const n = num("#admCodeSum"); if (n < 1) return toast("Введите сумму");
-      const code = makeCode("P", n, Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36));
-      $("#admCodeOut").textContent = code; $("#admCodeOut").hidden = false; hap.soft();
-      navigator.clipboard && navigator.clipboard.writeText(code).then(() => toast("Промокод скопирован"), () => {});
+      toast("Промокоды создаются в админке: Профиль → Админка → Промокоды");
     });
     $("#admReset").addEventListener("click", () => {
       if (!confirm("Сбросить баланс, подарки и историю на этом устройстве?")) return;
@@ -1106,13 +1134,13 @@
       renderStake(); renderProfile(); renderTasks();
       if (App.mode && App.mode.enter && !App.busy) App.mode.enter();
     }, Cat, byId, state: () => state, save, user, inTg,
-    $, all, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
+    $, all, esc, safeUrl, STAR, fmt, fmtS, pct, xf, REDUCED, wait, tween,
     hap, snd, duckData, makeCode, redeemCode, setDuck, playDuck, syncDucks, initDucks,
     bg, pic, tile, chip, starChip, bestGift, payout, grant, sellUids,
     Fair, sha256, hex, enc, nextRound, Dial, confetti, PARTY, toast,
     openSheet, closeSheet, get sheet() { return sheetEl; },
     stake, stakeValue, takeStake, stakeChips, renderStake, renderBalance,
-    showPrize, showMiss, log, renderFeed, renderTasks, renderProfile, openGift, setCta,
+    showPrize, showMiss, log, logShow, renderFeed, renderTasks, renderProfile, openGift, setCta,
     locked, invTile, bannerLook, tg, BOT_USERNAME, get tab() { return tab; }, applyReward, buyStars, live: null,
     registerMode(name, m) { modes[name] = m; }, get modes() { return modes; }, showMode, start,
     mode: null, modeName: "", busy: false, pressed: false,

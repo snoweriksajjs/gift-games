@@ -50,8 +50,25 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
     const dur = st.fast ? 900 : 1900, turns = st.fast ? 1 : 2;
 
-    while (wins < MAX_WINS) {
-      round = A.nextRound();
+    // вся серия разыгрывается сразу, приз зачисляется до анимации: если закрыть приложение посреди серии, выигрыш не пропадёт
+    const rounds = [];
+    for (let k = 0; k < MAX_WINS; k++) { const r = A.nextRound(); rounds.push(r); if (r.roll >= P) break; }
+    const total = rounds.filter((r) => r.roll < P).length, last = rounds[rounds.length - 1];
+    let res = null, entry;
+    st.stats.bestStreak = Math.max(st.stats.bestStreak, total);
+    if (total > 0) {
+      res = A.payout(bet * Math.pow(2, total));
+      st.stats.wins++; st.stats.best = Math.max(st.stats.best, res.value);
+      entry = { mode: "streak", win: true, bet, id: res.gift ? res.gift.id : null, mult: Math.pow(2, total), ...last,
+        text: `Серия из ${total} побед, шанс раунда ${pct(P)}. Показан последний раунд` };
+    } else {
+      entry = { mode: "streak", win: false, bet, id: null, mult: 0, ...last,
+        text: `Серия без побед, шанс раунда ${pct(P)}. Для победы нужно число меньше ${(P * 100).toFixed(3).replace(".", ",")}` };
+    }
+    A.log(entry, true);
+
+    for (const r of rounds) {
+      round = r;
       const win = round.roll < P;
       dial.setText(null, `раунд ${wins + 1}`);
       await dial.spin(round.roll, P, { dur, turns });
@@ -66,23 +83,16 @@
       await A.wait(A.REDUCED ? 100 : st.fast ? 350 : 700);
     }
 
-    st.stats.bestStreak = Math.max(st.stats.bestStreak, wins);
     const mult = Math.pow(2, wins);
-    if (wins > 0) {
-      const r = A.payout(bet * mult);
-      st.stats.wins++; st.stats.best = Math.max(st.stats.best, r.value);
+    A.logShow(entry);
+    if (res) {
       dial.mark("win"); dial.setText(null, `серия ${wins}`);
-      A.log({ mode: "streak", win: true, bet, id: r.gift ? r.gift.id : null, mult, ...round,
-        text: `Серия из ${wins} побед, шанс раунда ${pct(P)}. Показан последний раунд` });
       await A.wait(A.REDUCED ? 50 : 450);
-      A.showPrize({ gift: r.gift, uid: r.uid, stars: r.stars, sub: `серия ${wins} · ${xf(mult)}` });
+      A.showPrize({ gift: res.gift, uid: res.uid, stars: res.stars, sub: `серия ${wins} · ${xf(mult)}` });
     } else {
       dial.setText(null, "мимо");
-      A.log({ mode: "streak", win: false, bet, id: null, mult: 0, ...round,
-        text: `Серия без побед, шанс раунда ${pct(P)}. Для победы нужно число меньше ${(P * 100).toFixed(3).replace(".", ",")}` });
       A.showMiss("Мимо с первого раза", `−${fmt(bet)} ${STAR}`);
     }
-    A.save();
     running = false; A.busy = false;
     A.setCta({ html: "Выберите ставку", disabled: true, fn: play });
     A.renderStake();

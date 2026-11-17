@@ -22,8 +22,13 @@ TOKEN = os.environ.get("TG_TOKEN") or sys.exit("Нужна переменная 
 API = f"https://api.telegram.org/bot{TOKEN}/"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 BANNER = os.environ.get("BANNER", "https://snoweriksajjs.github.io/gift-games/img/logo-banner.jpg")
-CODE_KEY = os.environ.get("CODE_KEY", "duckchance-codes-v1")   # тот же ключ, что в js/core.js
-REF_BONUS = int(os.environ.get("REF_BONUS", "100"))
+def ref_bonus():
+    """Бонус за друга из админки (одно число для бота и приложения)."""
+    adm = sys.modules.get("admin")
+    try:
+        return int(adm.settings().get("ref_bonus") or 0) if adm else 100
+    except Exception:
+        return 100
 VER = os.environ.get("APP_VER", "29")
 LOG = os.environ.get("PAY_LOG", "payments.log")
 SEEN = os.environ.get("SEEN_FILE", "seen_users.json")
@@ -137,9 +142,19 @@ def send(chat, text, **kw):
     return tg("sendMessage", chat_id=chat, text=text, parse_mode="HTML", **kw)
 
 
-def make_code(kind, amount, nonce):
-    sig = hmac.new(CODE_KEY.encode(), f"{kind}:{amount}:{nonce}".encode(), hashlib.sha256).hexdigest()[:10]
-    return f"{kind}-{amount}-{nonce}-{sig}"
+def ref_grant(ref, friend):
+    """Бонус за друга: выдача на сервере (раньше был подписанный код, а ключ подписи лежал в коде сайта).
+    Сумма берётся из админки (ref_bonus). Один бонус за каждого друга."""
+    adm = sys.modules.get("admin")
+    if not adm:
+        return 0
+    amount = int(adm.settings().get("ref_bonus") or 0)
+    note = f"За приглашённого друга #{friend}"
+    if amount <= 0 or adm.q1("SELECT id FROM grants WHERE user=? AND note=?", ref, note):
+        return 0
+    adm.run("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, 'add', ?, NULL, 0, ?, ?)",   # 'add' понимают и старые версии приложения
+            ref, amount, note, int(time.time()))
+    return amount
 
 
 def app_url(**query):
@@ -312,7 +327,7 @@ def send_invite(chat, uid, tg_user):
     except Exception as err:
         print("Реферальный баннер не вышел:", err, flush=True)
         send(chat, ref_caption(), reply_markup=kb)
-    send(chat, f"{e('money')} <b>Перешлите сообщение выше друзьям или в чаты.</b>\n\nЗа каждого, кто придёт по вашей кнопке, вы получите <b>{REF_BONUS} ⭐</b>.\n\nВаша ссылка: <code>{link}</code>",
+    send(chat, f"{e('money')} <b>Перешлите сообщение выше друзьям или в чаты.</b>\n\nЗа каждого, кто придёт по вашей кнопке, вы получите <b>{ref_bonus()} ⭐</b>.\n\nВаша ссылка: <code>{link}</code>",
          reply_markup={"inline_keyboard": [[{"text": "Выбрать чат", "url": share_url(uid)}]]}, disable_web_page_preview=True)
 
 
@@ -512,11 +527,13 @@ def on_start(m):
         send(m["chat"]["id"], welcome(), reply_markup=main_menu(ref))
     # бонус пригласившему: только за нового человека и не за самого себя
     if ref and is_new and int(ref) != uid:
-        code = make_code("R", REF_BONUS, str(uid))
         name = escape(m["from"].get("first_name", "Друг"))
+        bonus = ref_grant(int(ref), uid)
         try:
-            send(int(ref), f"{e('party')} {name} пришёл по вашей ссылке. Заберите <b>{REF_BONUS} звёзд</b>.",
-                 reply_markup=play_button(f"Забрать {REF_BONUS} звёзд", code=code))
+            if not bonus:
+                raise RuntimeError("бонус не начислен")
+            send(int(ref), f"{e('party')} {name} пришёл по вашей ссылке. <b>+{bonus} звёзд</b> уже ждут вас в приложении.",
+                 reply_markup=play_button(f"Забрать {bonus} звёзд"))
             print("Приглашение:", ref, "<-", uid, flush=True)
         except Exception as err:  # пригласивший мог не запускать бота или заблокировать его
             print("Не удалось написать пригласившему", ref, err, flush=True)
@@ -650,7 +667,12 @@ def main():
                 q = u.get("pre_checkout_query")
                 if q:
                     ok = q.get("currency") == "XTR" and q.get("invoice_payload", "").startswith("stars_")
-                    call("answerPreCheckoutQuery", pre_checkout_query_id=q["id"], ok=ok, **({} if ok else {"error_message": "Счёт не распознан"}))
+                    adm = sys.modules.get("admin")
+                    s = adm.settings() if adm else {}
+                    closed = not adm or not s.get("deposits", True) or s.get("maintenance")
+                    why = "Счёт не распознан" if not ok else "Пополнение временно отключено"
+                    ok = ok and not closed      # без сервера звёзды некуда начислить: оплату не принимаем
+                    call("answerPreCheckoutQuery", pre_checkout_query_id=q["id"], ok=ok, **({} if ok else {"error_message": why}))
                     print("Счёт", q["invoice_payload"], "от", q["from"]["id"], "подтверждён" if ok else "отклонён", flush=True)
                 if u.get("callback_query"):
                     on_callback(u["callback_query"])
@@ -665,6 +687,10 @@ def main():
                     with open(LOG, "a") as f:
                         f.write(json.dumps(line) + "\n")
                     print("Оплата:", line, flush=True)
+                    try:     # звёзды начисляет сервер выдачей: приложение заберёт их, даже если закрылось после оплаты
+                        sys.modules["admin"].record_payment(uid, p["total_amount"], p["invoice_payload"], p["telegram_payment_charge_id"])
+                    except Exception as err:
+                        print("ОПЛАТА НЕ ЗАПИСАНА В БАЗУ, начислить вручную:", line, repr(err), flush=True)
                     send(m["chat"]["id"], f"{e('money')} Оплата прошла: <b>+{p['total_amount']} ⭐</b> на балансе.", reply_markup=play_button("Играть"))
                 elif uid in ADMINS and m.get("reply_to_message") and from_support(m):
                     pass

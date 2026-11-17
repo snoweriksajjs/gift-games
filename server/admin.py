@@ -20,6 +20,10 @@ DEFAULTS = {
     "withdraw_note": "Вывод подарков скоро",
     "market_prices": True,       # брать цены подарков с рынка (Fragment)
     "star_usd": 0.015,           # сколько долларов стоит одна звезда при пересчёте цен
+    "max_bet": 100000,           # самая большая ставка в Краше и на Арене
+    "hold_over": 50000,          # выигрыш в онлайн-режимах больше этой суммы ждёт подтверждения админа
+    "transfers": True,           # передача подарков между игроками
+    "transfers_day": 10,         # сколько подарков игрок может передать за сутки
 }
 PRICES_URL = os.environ.get("PRICES_URL", "https://atlannn.github.io/telegram-gifts-floor-price/api/v1/latest.json")
 PRICES_EVERY = 3 * 3600
@@ -41,12 +45,15 @@ def bind(g):
       wager REAL DEFAULT 0, note TEXT, created INTEGER, claimed INTEGER);
     CREATE INDEX IF NOT EXISTS grants_user ON grants (user, claimed);
     CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, admin INTEGER, action TEXT, data TEXT, at INTEGER);
+    CREATE TABLE IF NOT EXISTS payments (charge TEXT PRIMARY KEY, user INTEGER, stars INTEGER, payload TEXT, at INTEGER);
     """)
     g["add_column"]("users", "banned", "INTEGER")
     g["add_column"]("users", "rtp", "TEXT")
     g["add_column"]("users", "wagered", "INTEGER")   # всего поставлено (с устройства игрока)
     g["add_column"]("users", "won", "INTEGER")       # всего выиграно, без бесплатных яиц
-    threading.Thread(target=prices_loop, daemon=True).start()          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
+    g["add_column"]("grants", "hold", "INTEGER")     # 1: крупный выигрыш ждёт проверки админом, игрок его пока не получает
+    threading.Thread(target=prices_loop, daemon=True).start()
+    threading.Thread(target=backup_loop, daemon=True).start()          # личные шансы игрока: {"all": 0.9, "modes": {"crash": 0.8}}
 
 
 q = lambda *a: G["q"](*a)
@@ -56,6 +63,38 @@ run = lambda *a: G["run"](*a)
 
 def err(code, text):
     return G["HttpError"](code, text)
+
+
+def record_payment(uid, stars, payload, charge):
+    """Оплата звёздами: запись в базу и выдача на баланс. Начисляет сервер, а не окно оплаты,
+    поэтому звёзды не пропадут, даже если приложение закрылось сразу после оплаты. Повтор той же оплаты не начисляется."""
+    with G["lock"]:
+        new = G["db"].execute("INSERT OR IGNORE INTO payments (charge, user, stars, payload, at) VALUES (?, ?, ?, ?, ?)",
+                              (charge, uid, int(stars), payload, int(time.time()))).rowcount == 1
+        if new:
+            G["db"].execute("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, 'pay', ?, NULL, 0, ?, ?)",
+                            (uid, int(stars), "Пополнение", int(time.time())))
+    return new
+
+
+BACKUP_DIR = os.environ.get("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(os.environ.get("DB", "duckchance.db"))), "backups")
+
+
+def backup_loop():
+    """Копия базы каждый час (24 штуки по кругу) и раз в сутки (7 штук по кругу)."""
+    import sqlite3
+    while True:
+        time.sleep(3600)
+        try:
+            os.makedirs(BACKUP_DIR, exist_ok=True)
+            t = time.gmtime()
+            for name in (f"hour-{t.tm_hour:02d}.db", f"day-{t.tm_wday}.db") if t.tm_hour == 0 else (f"hour-{t.tm_hour:02d}.db",):
+                dst = sqlite3.connect(os.path.join(BACKUP_DIR, name))
+                with G["lock"]:
+                    G["db"].backup(dst)
+                dst.close()
+        except Exception as e:
+            print("Бэкап не удался:", repr(e), flush=True)
 
 
 def settings():
@@ -162,12 +201,15 @@ def public_config(uid):
     floors = s.get("floors") if s.get("market_prices", True) and isinstance(s.get("floors"), dict) else None
     return {"floors": floors, "prices_date": s.get("prices_date") if floors else "",
             "rtp": base, "modes": modes, "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
+            "max_bet": s["max_bet"], "transfers": s["transfers"],
             "maintenance": s["maintenance"] and uid not in ADMINS, "maint_text": s["maint_text"], "withdraw_note": s["withdraw_note"],
             "tasks": tasks, "admin": uid in ADMINS}
 
 
 def gift_ok(g):
-    return isinstance(g, str) and bool(G["GIFT_ID"].match(g))
+    """Номер подарка из каталога (не просто похожий на номер)."""
+    import catalog
+    return isinstance(g, str) and bool(G["GIFT_ID"].match(g)) and catalog.parse(g) is not None
 
 
 def num(v, lo, hi, default=0):
@@ -182,17 +224,9 @@ def num(v, lo, hi, default=0):
 def stats():
     now = int(time.time())
     one = lambda sql, *a: (q1(sql, *a) or {}).get("n") or 0
-    pay_n = pay_sum = pay_day = 0
-    try:
-        with open(os.environ.get("PAY_LOG", "payments.log")) as f:
-            for line in f:
-                p = json.loads(line)
-                pay_n += 1
-                pay_sum += p.get("stars", 0)
-                if now - p.get("time", 0) < 86400:
-                    pay_day += p.get("stars", 0)
-    except Exception:
-        pass
+    pay = q1("SELECT COUNT(*) n, COALESCE(SUM(stars),0) s FROM payments") or {}
+    pay_n, pay_sum = pay.get("n") or 0, pay.get("s") or 0
+    pay_day = (q1("SELECT COALESCE(SUM(stars),0) s FROM payments WHERE at>?", now - 86400) or {}).get("s") or 0
     bp = sys.modules.get("bot_poller")
     return {
         "users": one("SELECT COUNT(*) n FROM users"),
@@ -204,6 +238,7 @@ def stats():
         "payments": pay_n, "paid_stars": pay_sum, "paid_day": pay_day,
         "balances": one("SELECT COALESCE(SUM(balance),0) n FROM users"),
         "banned": one("SELECT COUNT(*) n FROM users WHERE banned=1"),
+        "held": one("SELECT COUNT(*) n FROM grants WHERE hold=1 AND claimed IS NULL"),
         "chats": one("SELECT COUNT(*) n FROM chats WHERE kind='group'"), "channels": one("SELECT COUNT(*) n FROM chats WHERE kind='channel'"),
         "dms": one("SELECT COUNT(*) n FROM chats WHERE kind='dm'"), "messages": one("SELECT COUNT(*) n FROM messages"),
         "transfers": one("SELECT COUNT(*) n FROM transfers"), "promo_uses": one("SELECT COUNT(*) n FROM promo_uses"),
@@ -256,8 +291,11 @@ def gen_code():
 def handle(method, p, uid, body, query, now):
     """Возвращает ответ, если путь наш, иначе None."""
     u = q1("SELECT banned FROM users WHERE id=?", uid)
-    if u and u.get("banned") and p not in (["me"], ["config"]):
+    is_admin = uid in ADMINS
+    if not is_admin and u and u.get("banned") and not (p == ["config"] or (p == ["me"] and method == "GET")):
         raise err(403, "banned")
+    if not is_admin and method == "POST" and p != ["me"] and settings().get("maintenance"):
+        raise err(503, "maintenance")
 
     if p == ["config"] and method == "GET":
         cfg = public_config(uid)
@@ -306,11 +344,11 @@ def handle(method, p, uid, body, query, now):
 
     # ---- выдачи от админа ----
     if p == ["grants"] and method == "GET":
-        return {"grants": q("SELECT id, kind, amount, gift, wager, note FROM grants WHERE user=? AND claimed IS NULL ORDER BY id", uid)}
+        return {"grants": q("SELECT id, kind, amount, gift, wager, note FROM grants WHERE user=? AND claimed IS NULL AND hold IS NULL ORDER BY id", uid)}
     if len(p) == 3 and p[:2] == ["grants", "claim"] and method == "POST":
         gid = int(p[2])
         with G["lock"]:
-            ok = G["db"].execute("UPDATE grants SET claimed=? WHERE id=? AND user=? AND claimed IS NULL", (now, gid, uid)).rowcount == 1
+            ok = G["db"].execute("UPDATE grants SET claimed=? WHERE id=? AND user=? AND claimed IS NULL AND hold IS NULL", (now, gid, uid)).rowcount == 1
         if not ok:
             raise err(409, "claimed")
         return q1("SELECT id, kind, amount, gift, wager, note FROM grants WHERE id=?", gid)
@@ -323,6 +361,21 @@ def handle(method, p, uid, body, query, now):
 
     if a == ["stats"]:
         return stats()
+
+    # крупные выигрыши онлайн-режимов на проверке: выдать или отклонить
+    if a == ["held"] and method == "GET":
+        rows = q("SELECT id, user, amount, note, created FROM grants WHERE hold=1 AND claimed IS NULL ORDER BY id DESC LIMIT 100")
+        return {"held": [r | {"player": G["user_card"](r["user"])} for r in rows]}
+    if len(a) == 3 and a[0] == "held" and a[2] in ("release", "reject") and method == "POST":
+        gid = int(a[1])
+        if a[2] == "release":
+            ok = G["db"].execute("UPDATE grants SET hold=NULL WHERE id=? AND hold=1 AND claimed IS NULL", (gid,)).rowcount == 1
+        else:
+            ok = G["db"].execute("UPDATE grants SET claimed=?, note=COALESCE(note,'') || ' (отклонено)' WHERE id=? AND hold=1 AND claimed IS NULL", (now, gid)).rowcount == 1
+        if not ok:
+            raise err(409, "already done")
+        log(uid, "held_" + a[2], {"grant": gid})
+        return {"ok": True}
 
     if a == ["users"] and method == "GET":
         s = G["clean"](query.get("q", [""])[0], 40).lstrip("@").lower()
@@ -374,6 +427,8 @@ def handle(method, p, uid, body, query, now):
             log(uid, "rtp", {"user": tid, **mine})
             return {"ok": True, "rtp": mine or None}
         if a[2:] == ["ban"] and method == "POST":
+            if tid in ADMINS and body.get("on"):
+                raise err(400, "cannot ban admin")
             run("UPDATE users SET banned=? WHERE id=?", 1 if body.get("on") else None, tid)
             log(uid, "ban", {"user": tid, "on": bool(body.get("on"))})
             return {"ok": True}
@@ -396,7 +451,7 @@ def handle(method, p, uid, body, query, now):
             s["rtp"] = round(num(body["rtp"], 0, 1, 0.95), 3)
         if isinstance(body.get("modes"), dict):
             s["modes"] = {m: round(num(v, 0, 1, 0.95), 3) for m, v in body["modes"].items() if m in MODES and v is not None and v != ""}
-        for k in ("deposits", "free_egg", "maintenance"):
+        for k in ("deposits", "free_egg", "maintenance", "transfers"):
             if k in body:
                 s[k] = bool(body[k])
         if "market_prices" in body:
@@ -405,6 +460,12 @@ def handle(method, p, uid, body, query, now):
             s["star_usd"] = round(num(body["star_usd"], 0.001, 1, 0.015), 4)
         if "ref_bonus" in body:
             s["ref_bonus"] = int(num(body["ref_bonus"], 0, 100000, 100))
+        if "max_bet" in body:
+            s["max_bet"] = int(num(body["max_bet"], 10, 10**9, 100000))
+        if "hold_over" in body:
+            s["hold_over"] = int(num(body["hold_over"], 100, 10**9, 50000))
+        if "transfers_day" in body:
+            s["transfers_day"] = int(num(body["transfers_day"], 0, 1000, 10))
         for k in ("maint_text", "withdraw_note"):
             if k in body:
                 s[k] = G["clean"](body[k], 200)
