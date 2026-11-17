@@ -41,7 +41,26 @@ def bet_of(body, key="bet"):
 
 def bind(g):
     G.update(g)
+    # ставки онлайн-раундов записываем в базу: если сервер перезапустился посреди раунда, ставки вернутся
+    G["db"].execute("CREATE TABLE IF NOT EXISTS live_bets (user INTEGER, mode TEXT, round INTEGER, stars INTEGER, gifts TEXT, at INTEGER)")
+    for b in [dict(r) for r in G["db"].execute("SELECT * FROM live_bets").fetchall()]:
+        try:
+            bank.refund(b["user"], b["stars"], json.loads(b["gifts"] or "[]"), "раунд прерван, ставка возвращена")
+        except Exception as e:
+            print("Не вернул ставку", b, repr(e), flush=True)
+    G["db"].execute("DELETE FROM live_bets")
     threading.Thread(target=loop, daemon=True).start()
+
+
+def bet_open(uid, mode, rid, stars, gifts):
+    G["run"]("INSERT INTO live_bets (user, mode, round, stars, gifts, at) VALUES (?, ?, ?, ?, ?, ?)", uid, mode, rid, stars, json.dumps(gifts), int(time.time()))
+
+
+def bet_close(mode, rid, uid=None):
+    if uid is None:
+        G["run"]("DELETE FROM live_bets WHERE mode=? AND round=?", mode, rid)
+    else:
+        G["run"]("DELETE FROM live_bets WHERE mode=? AND round=? AND user=?", mode, rid, uid)
 
 
 def now_ms():
@@ -129,6 +148,7 @@ def crash_tick(t):
                 crash_cash(uid, b["auto"])
         if t >= crash["crash_at"]:
             crash.update({"phase": "end", "end_at": t})
+            bet_close("crash", crash["id"])
             crash_hist.insert(0, crash["cp"])
             del crash_hist[14:]
     elif ph == "end" and t >= crash["end_at"] + CRASH_END_MS:
@@ -179,6 +199,7 @@ def arena_tick(t):
         payout = int(total * arena["rtp"])
         w = arena["players"][wi]
         arena.update({"phase": "play", "play_at": t, "winner": wi, "payout": payout, "total": total})
+        bet_close("arena", arena["id"])
         arena["grant"], arena["held"] = give_win(w["id"], payout, f"Арена, банк {total}")
         to_feed(w["id"], "arena", payout, payout / max(1, w["value"]))
     elif ph == "play" and t >= arena["play_at"] + ARENA_SHOW_MS:
@@ -235,7 +256,8 @@ def handle(method, p, uid, body, query, now):
                 raise err(400, "bad auto")
             if auto >= 1000:                         # точка краша не выше ×1000: такой автовывод не сработал бы никогда
                 raise err(400, "auto too high")
-            bet, _, gifts = bank.charge(uid, body, MIN_BET, max_bet())
+            bet, stars, gifts = bank.charge(uid, body, MIN_BET, max_bet())
+            bet_open(uid, "crash", crash["id"], stars, gifts)
             crash["bets"][uid] = {"bet": bet, "auto": round(auto, 2) if auto >= 1.01 else 0, "cashed": None,
                                   "gift": (gifts or [None])[0]}
             return crash_state(uid)
@@ -261,6 +283,7 @@ def handle(method, p, uid, body, query, now):
             if len(arena["players"]) >= 12:
                 raise err(409, "room full")
             value, stars, gifts = bank.charge(uid, body, MIN_BET, max_bet())
+            bet_open(uid, "arena", arena["id"], stars, gifts)
             arena["players"].append({"id": uid, "value": value, "stars": stars, "gifts": gifts[:10]})
             if arena["phase"] == "wait":
                 arena.update({"phase": "gather", "ends_at": now_ms() + ARENA_GATHER_MS})
@@ -271,12 +294,14 @@ def handle(method, p, uid, body, query, now):
             if arena["phase"] != "gather":
                 raise err(409, "cannot leave now")
             me = next((x for x in arena["players"] if x["id"] == uid), None)
+            rid = arena["id"]
             if not me:
                 raise err(409, "not in")
             arena["players"].remove(me)
             if not arena["players"]:
                 arena_new()
             bank.refund(uid, me["stars"], me["gifts"], "возврат ставки на арене")
+            bet_close("arena", rid, uid)
             return {"ok": True, "value": me["value"], "state": bank.state(uid)}
 
         if p == ["feed"] and method == "GET":
