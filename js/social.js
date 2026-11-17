@@ -1101,7 +1101,7 @@
     if (it.stake) return toast("Подарок в стейкинге");
     const s = byId[it.id];
     const meCard = { id: myId, name: user ? user.first_name : "Вы", photo: user && user.photo_url, look: A.bannerLook() };
-    $("#sdBody").innerHTML = `<div class="sd-art" style="${A.bg(s)}"><i class="pat"></i><span class="anim"></span>${A.pic(s, true)}</div>
+    $("#sdBody").innerHTML = `<div class="sd-art" style="${A.bg(s)}"><i class="pat"></i><span class="anim"></span>${A.pic(s, true, true)}</div>
       <div class="sd-name"><b>${esc(s.gift)}</b><span>${esc(s.model)}</span></div>
       <div class="sd-attrs"><span><i>Модель</i>${esc(s.model)}</span><span><i>Фон</i>${esc(s.backdrop)}</span><span><i>Символ</i>${esc(s.symbol)}</span></div>
       <div class="sd-flow"><span class="sd-p">${ava(meCard, "lg")}<i>Вы</i></span><svg viewBox="0 0 48 24"><path d="M2 12h40M34 4l8 8-8 8" /></svg><span class="sd-p">${ava(peer, "lg")}<i>${esc(peer.name)}</i></span></div>

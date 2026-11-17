@@ -259,13 +259,24 @@
     duckData(name).then((data) => {
       el._loading = null;
       if (el.dataset.duck !== name || el._anim) return;
+      liveDucks.add(el);
       el._anim = window.lottie.loadAnimation({ container: el, renderer: "svg", loop: !!loop, autoplay: true, animationData: JSON.parse(JSON.stringify(data)) });
       el.classList.add("live");
       if (!loop) el._anim.addEventListener("complete", () => el._anim && el._anim.goToAndStop(0, true));
       if (loop && !visible(el)) el._anim.pause();
     }).catch(() => { el._loading = null; });
   }
+  // анимации уток держим только для видимых: невидимые выгружаем, иначе память растёт до сотни мегабайт
+  const liveDucks = new Set();
+  function pruneDucks() {
+    for (const el of liveDucks) {
+      if (el.isConnected && visible(el)) continue;
+      dropDuck(el); liveDucks.delete(el);
+    }
+  }
+  setInterval(pruneDucks, 5000);
   function syncDucks() {
+    pruneDucks();
     all(".duck[data-loop]").forEach((el) => {
       if (visible(el)) playDuck(el, true); else if (el._anim) el._anim.pause();
     });
@@ -278,7 +289,12 @@
   const bg = (s) => `--c1:${s.c1};--c2:${s.c2};--ct:${s.ct};--cp:${s.cp};--sym:url('${s.sym}')`;
   // если картинки нет на CDN, берём её с API того же сервиса (cdn …/models/Подарок/png/Модель.png → api …/model/Подарок/Модель.png)
   window.giftImgFallback = (img) => { img.onerror = null; img.src = img.src.replace("cdn.changes.tg/gifts/models/", "api.changes.tg/model/").replace("/png/", "/") + "?size=256"; };
-  const pic = (s, eager) => `<img src="${s.img}" alt="" ${eager ? "" : 'loading="lazy"'} decoding="async" draggable="false" onerror="giftImgFallback(this)">`;
+  // в плитках и фишках берём картинку 128 px (около 25 КБ вместо 80 КБ и в 16 раз меньше памяти), крупно показываем оригинал
+  const thumbOf = (s) => `https://api.changes.tg/model/${encodeURIComponent(s.gift.replace(/\u2019/g, "'"))}/${encodeURIComponent(s.model.replace(/\u2019/g, "'"))}.png?size=128`;
+  window.giftThumbFallback = (img) => { img.onerror = () => giftImgFallback(img); img.src = img.dataset.full; };
+  const pic = (s, eager, full) => full
+    ? `<img src="${s.img}" alt="" ${eager ? "" : 'loading="lazy"'} decoding="async" draggable="false" onerror="giftImgFallback(this)">`
+    : `<img src="${thumbOf(s)}" data-full="${s.img}" width="128" height="128" alt="" ${eager ? "" : 'loading="lazy"'} decoding="async" draggable="false" onerror="giftThumbFallback(this)">`;
   function tile(s, cls = "", attrs = "") {
     return `<div class="gift ${cls}" style="${bg(s)}" ${attrs} tabindex="0" role="button" aria-label="${s.gift}, ${s.model}, ${fmt(s.price)} звёзд">
       <i class="pat"></i><span class="rib">${String(s.rare).replace(".", ",")}%</span>${pic(s)}
@@ -374,7 +390,7 @@
       this.face.classList.toggle("has", !!s);
       this.face.style.cssText = s ? bg(s) : "";
       this.art.classList.remove("playing");
-      this.art.innerHTML = s ? `<span class="anim"></span>${pic(s, true)}` : "";
+      this.art.innerHTML = s ? `<span class="anim"></span>${pic(s, true, true)}` : "";
       if (!s || REDUCED || !window.lottie) return;
       fetch(s.anim).then((r) => (r.ok ? r.json() : Promise.reject())).then((data) => {
         if (token !== this.token) return;
@@ -586,7 +602,7 @@
     if (prizeAnim) { try { prizeAnim.destroy(); } catch {} prizeAnim = null; }
     resGift.className = "res-art" + (gift ? "" : " stars");
     resGift.style.cssText = gift ? bg(gift) : "";
-    resGift.innerHTML = gift ? `<i class="pat"></i><span class="anim"></span>${pic(gift, true)}` : `<b>${STAR}${fmt(stars)}</b>`;
+    resGift.innerHTML = gift ? `<i class="pat"></i><span class="anim"></span>${pic(gift, true, true)}` : `<b>${STAR}${fmt(stars)}</b>`;
     $("#resTitle").innerHTML = gift ? `${gift.gift} <span class="hint">${gift.model}</span>` : "Звёзды на балансе";
     $("#resText").innerHTML = [gift ? `${STAR} ${fmt(gift.price)}` : "", sub].filter(Boolean).join(" · ");
     const extra = $("#resExtra");
@@ -778,7 +794,7 @@
   function openGift(s, uid) {
     const art = $("#gcArt");
     art.style.cssText = bg(s);
-    art.innerHTML = `<i class="pat"></i><span class="anim"></span>${pic(s, true)}`;
+    art.innerHTML = `<i class="pat"></i><span class="anim"></span>${pic(s, true, true)}`;
     $("#gcName").textContent = s.gift;
     $("#gcNum").textContent = s.model;
     const row = (k, v, r) => `<div class="row"><span>${k}</span><span class="grow gc-v">${v}</span><b>${String(r).replace(".", ",")}%</b></div>`;
@@ -847,8 +863,15 @@
   // ---------- вкладки и режимы ----------
   const modes = {};
   let tab = "pageUp";
+  // онлайн-режимы (Краш, Арена) опрашивают сервер и рисуют, только пока их видно
+  const ONLINE = ["crash", "arena"];
+  function pauseMode() { if (App.mode && ONLINE.includes(App.modeName) && App.mode.leave && !App.busy) { App.mode.leave(); App.modePaused = true; } }
+  function resumeMode() { if (App.modePaused && App.mode && App.mode.enter) { App.modePaused = false; App.mode.enter(); } }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) pauseMode(); else if (tab === "pageUp") resumeMode(); });
   function showTab(id) {
+    if (tab === "pageUp" && id !== "pageUp") pauseMode();
     tab = id;
+    if (id === "pageUp") resumeMode();
     all(".tab").forEach((x) => { const on = x.dataset.tab === id; x.classList.toggle("on", on); if (on) playDuck($(".duck", x), false); });
     all(".page").forEach((p) => { const on = p.id === id; p.hidden = !on; p.classList.toggle("on", on); });
     ctaBar.hidden = id !== "pageUp";
