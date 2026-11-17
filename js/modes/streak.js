@@ -52,7 +52,7 @@
     let round = null;
     A.setCta({ html: "Идёт серия", disabled: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
-    const dur = st.fast ? 900 : 1900, turns = st.fast ? 1 : 2;
+    const dur = st.fast === 2 ? 120 : st.fast ? 900 : 1900, turns = st.fast === 2 ? 0 : st.fast ? 1 : 2;
 
     // вся серия разыгрывается сразу, приз зачисляется до анимации: если закрыть приложение посреди серии, выигрыш не пропадёт
     const rounds = [];
@@ -84,7 +84,7 @@
       $("#streakCount").textContent = wins;
       ladder(bet, wins); prizeSlot(prize);
       A.hap.coin(); A.playDuck($("#streakDuck"), false);
-      await A.wait(A.REDUCED ? 100 : st.fast ? 350 : 700);
+      await A.wait(A.REDUCED || st.fast === 2 ? 80 : st.fast ? 350 : 700);
     }
 
     const mult = Math.pow(2, wins);

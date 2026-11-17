@@ -117,13 +117,15 @@
         target = best.id; gotId = null; activeMult = b.dataset.m;
         A.hap.select(); render();
       });
-      // «Быстро» общий переключатель для круга во всех режимах
+      // скорость общая для всех режимов: обычно → быстро → мгновенно (без прокрутки, сразу итог)
+      const NAMES = ["Обычно", "Быстро", "Мгновенно"];
       const sync = () => {
-        all("[data-fast]").forEach((i) => (i.checked = !!A.state().fast));
-        all("[data-fast-label]").forEach((l) => (l.textContent = A.state().fast ? "Вкл" : "Выкл"));
+        const f = Number(A.state().fast) || 0;
+        all("[data-fast]").forEach((i) => (i.checked = f > 0));
+        all("[data-fast-label]").forEach((l) => (l.textContent = NAMES[f]));
       };
       all("[data-fast]").forEach((i) => i.addEventListener("change", () => {
-        A.state().fast = i.checked; A.save(); sync(); A.hap.select();
+        A.state().fast = ((Number(A.state().fast) || 0) + 1) % 3; A.save(); sync(); A.hap.select();
         A.playDuck($(".duck", i.closest(".stat")), false);
       }));
       sync();

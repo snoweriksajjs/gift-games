@@ -44,9 +44,10 @@
     board.classList.add("sign");               // подарки стягиваются в центр
     A.playDuck($("#ctDuck"), false);
     A.hap.stop();
-    await A.wait(A.REDUCED ? 200 : 900);
+    const quick = A.REDUCED || A.state().fast === 2;
+    await A.wait(quick ? 150 : A.state().fast ? 450 : 900);
     A.hap.boom(); A.hap.hit();
-    await A.wait(A.REDUCED ? 100 : 600);
+    await A.wait(quick ? 80 : A.state().fast ? 300 : 600);
     board.classList.remove("sign");
     signing = false; A.busy = false;
     A.logShow(entry);

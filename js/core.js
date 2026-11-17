@@ -393,8 +393,9 @@
       const landDeg = Dial.landing(roll, ch), half = ch * 180;
       const margin = Math.abs(angDist(landDeg, 180) - half);
       const fast = state.fast;
-      const dur = REDUCED ? 300 : opts.dur || (fast ? 1800 : 5600), turns = REDUCED ? 0 : opts.turns || (fast ? 3 : 7);
-      const wobble = REDUCED ? 0 : Math.min(2, margin * 0.6);
+      const instant = fast === 2;            // «Мгновенно»: бегунок сразу встаёт на итог
+      const dur = REDUCED || instant ? (instant ? 120 : 300) : opts.dur || (fast ? 1800 : 5600), turns = REDUCED || instant ? 0 : opts.turns || (fast ? 3 : 7);
+      const wobble = REDUCED || instant ? 0 : Math.min(2, margin * 0.6);
       this.mark("spinning");
       return new Promise((resolve) => {
         const from = this.angle, cur = ((from % 360) + 360) % 360;
@@ -509,6 +510,7 @@
     const gifts = items.map((it) => byId[it.id]);
     const value = stars + gifts.reduce((a, s) => a + s.price, 0);
     state.balance -= stars;
+    if (stars > 0 && !gifts.length) state.lastBet = { mode: App.modeName, stars };   // для кнопки «Повторить»
     state.inv = state.inv.filter((it) => !stake.uids.has(it.uid));
     stake.uids.clear(); stake.stars = 0; balInput.value = 0;
     state.stats.wagered += value; state.stats.spins++;
@@ -561,7 +563,10 @@
   all("[data-bal]").forEach((b) => b.addEventListener("click", () => {
     if (App.busy) return;
     if (!state.balance && b.dataset.bal !== "zero") return toast("На балансе нет звёзд");
-    balInput.value = b.dataset.bal === "max" ? state.balance : b.dataset.bal === "half" ? Math.floor(state.balance / 2) : 0;
+    const cur = Math.floor(Number(balInput.value) || 0), k = b.dataset.bal;
+    const v = k === "max" ? state.balance : k === "half" ? Math.floor((cur || state.balance) / 2) : k === "x2" ? cur * 2
+      : k === "p100" ? cur + 100 : k === "p1k" ? cur + 1000 : 0;
+    balInput.value = Math.max(0, Math.min(state.balance, v));
     balInput.dispatchEvent(new Event("input"));
   }));
   sellSel.addEventListener("click", () => {
@@ -821,6 +826,17 @@
   const cta = $("#cta"), cta2 = $("#cta2"), ctaBar = $("#ctaBar");
   let ctaFn = null, cta2Fn = null;
   function setCta(main, second) {
+    // после раунда ставка пуста: предлагаем повторить прошлую одним нажатием
+    const lb = state.lastBet;
+    if (!second && main.disabled && !App.busy && lb && lb.mode === App.modeName && lb.stars <= state.balance && !stakeValue()
+      && ["classic", "streak", "crash", "arena"].includes(App.modeName)) {
+      second = { html: `Повторить ${STAR}${fmtS(lb.stars)}`, fn: () => {
+        if (App.busy) return;
+        stake.stars = Math.min(lb.stars, state.balance); balInput.value = stake.stars; hap.select();
+        renderStake();                                      // режим обновит главную кнопку
+        if (!cta.disabled && ctaFn) ctaFn(); else if (App.modeName === "classic") toast("Ставка поставлена, выберите подарок-цель");
+      } };
+    }
     cta.innerHTML = main.html; cta.disabled = !!main.disabled; ctaFn = main.fn || null;
     cta2.hidden = !second;
     if (second) { cta2.innerHTML = second.html; cta2.disabled = !!second.disabled; cta2Fn = second.fn || null; }
