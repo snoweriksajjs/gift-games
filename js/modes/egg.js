@@ -181,6 +181,7 @@
   }
 
   A.registerMode("egg", {
+    freeReady,
     init() {
       $("#eggArt").addEventListener("click", tap);
       $("#eggTiers").addEventListener("click", (e) => {

@@ -34,15 +34,15 @@
     $("#outLabel").textContent = !target && gotId ? "Получен" : "Цель";
     $("#outSum").textContent = fmtS(out ? A.byId[out].price : 0);
     all("#mults button").forEach((b) => b.classList.toggle("on", b.dataset.m === activeMult));
-    $("#multVal").textContent = t && v ? xf(t.price / v) : "×0";
-    $("#winVal").innerHTML = t && v && t.price > v ? `+${fmtS(t.price - v)} ${STAR}` : `0 ${STAR}`;
+    $("#multVal").textContent = t && v ? xf(t.price / v) : "—";
+    $("#winVal").innerHTML = t && v && t.price > v ? `+${fmtS(t.price - v)} ${STAR}` : "—";
     if (!keepResult) {
       dial.setZone(ch); dial.setChance(ch); dial.setGift(t || null); dial.mark(null);
       dial.setText(null, t ? "шанс" : "Выберите цель");
     }
     const ok = t && v > 0 && t.price > v && ch >= MIN_CHANCE;
     A.setCta({
-      html: spinning ? "Крутится" : ok ? `Апгрейд за ${STAR}${fmt(v)}` : !v ? "Выберите ставку" : !t ? "Выберите цель" : t.price <= v ? "Цель дешевле ставки" : "Шанс меньше 1%",
+      html: spinning ? "Крутится" : ok ? `Апгрейд за ${STAR}${fmt(v)}` : !v ? "Выберите ставку" : !t ? "Выберите подарок-цель" : t.price <= v ? "Выберите цель дороже ставки" : "Цель слишком дорогая: шанс меньше 1%",
       disabled: !ok || spinning, fn: act,
     });
   }
@@ -95,7 +95,9 @@
         target = c.dataset.id; gotId = null; activeMult = null;
         A.hap.select(); A.closeSheet(); render();
       });
-      shopSearch.addEventListener("input", () => { shopLimit = 120; renderShop(); });
+      // поиск по полумиллиону подарков: ждём, пока игрок допечатает, а не ищем на каждую букву
+      let searchT = null;
+      shopSearch.addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(() => { shopLimit = 120; renderShop(); }, 250); });
       shopSort.addEventListener("change", () => { shopLimit = 120; renderShop(); });
       priceSeg.addEventListener("click", (e) => {
         const b = e.target.closest("[data-r]"); if (!b) return;

@@ -534,12 +534,17 @@
       invGrid.innerHTML = state.inv.length
         ? [...state.inv].sort((a, b) => byId[b.id].price - byId[a.id].price)
           .map((it) => invTile(it, stake.uids.has(it.uid) ? "sel" : "")).join("")
-        : `<div class="empty">Подарков пока нет. Начните со звёзд.</div>`;
+        : state.balance > 0
+          ? `<div class="empty">Подарков пока нет. Поставьте звёзды: введите сумму выше, а подарки появятся, когда выиграете.</div>`
+          : `<div class="empty start-empty"><b>У вас пока 0 звёзд</b><span>Заберите бесплатное яйцо со звёздами или пополните баланс</span>
+              <span class="start-btns">${freeEggReady() ? `<button class="mini-btn" data-start="egg">Забрать бесплатное яйцо</button>` : ""}<button class="mini-btn ${freeEggReady() ? "ghost" : ""}" data-start="deposit">Пополнить</button></span></div>`;
     }
     if (App.mode && App.mode.onStake) App.mode.onStake();
   }
   stakeSheet.addEventListener("sheet:open", () => { stakeSheet.hidden = false; renderStake(); });
   invGrid.addEventListener("click", (e) => {
+    const st = e.target.closest("[data-start]");
+    if (st) { closeSheet(); setTimeout(() => (st.dataset.start === "egg" ? showMode("egg") : openSheet($("#depositSheet"))), 320); return; }
     const c = e.target.closest("[data-uid]"); if (App.busy || !c || App.pressed) return;
     const uid = Number(c.dataset.uid);
     if (locked(uid)) return toast("Подарок в стейкинге");
@@ -634,6 +639,7 @@
   const MODE_DUCK = { classic: "chart", streak: "fire", contract: "wizard", arena: "ball", crash: "rocket", egg: "hatch" };
   // quiet: записать раунд до анимации, не показывая итог; показать потом через logShow(entry)
   function log(entry, quiet) {
+    (state.played = state.played || {})[entry.mode] = 1;
     state.history.unshift(entry);
     state.history = state.history.slice(0, 50);
     save();
@@ -645,7 +651,8 @@
       const g = entry.id && byId[entry.id];
       App.reportWin(entry.mode, g ? g.price : Math.round((entry.bet || 0) * (entry.mult || 0)), entry.id || null, entry.mult);
     }
-    renderFeed(true); renderTasks();
+    renderFeed(true); renderTasks(); markEgg();
+    if (App.modeName === entry.mode) showHint(entry.mode);
   }
   function renderFeed(fresh) {
     $("#feed").hidden = !state.history.length;
@@ -798,12 +805,43 @@
     const b = e.target.closest("[data-tab]"); if (!b || App.busy || b.dataset.tab === tab) return;
     hap.select(); showTab(b.dataset.tab);
   });
+  // бесплатное яйцо доступно сегодня (считает режим «Яйцо»)
+  function freeEggReady() { try { return !!(modes.egg && modes.egg.freeReady && modes.egg.freeReady()); } catch { return false; } }
+  function markEgg() { const b = $('#modes [data-mode="egg"]'); if (b) b.classList.toggle("free", freeEggReady()); }
+  // правила режима: показываем сверху, пока игрок не сыграл в этом режиме хотя бы раз
+  function ruleText(name) {
+    const pc = (x) => Math.max(0, Math.round(x * 100)) + "%";
+    if (name === "classic") return "Поставьте звёзды или подарки и выберите подарок дороже ставки. Шанс виден на круге: остановится бегунок в зелёной зоне, и подарок ваш. Нет, и ставка сгорает.";
+    if (name === "streak") return "Одна ставка, круг крутится сам до первого промаха. Каждая победа удваивает приз, максимум 10 побед (×1024). Промах с первого раза сжигает ставку.";
+    if (name === "contract") {
+      const mo = modes.contract && modes.contract.multOf; let lo = 0, hi = 1;
+      if (mo) for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (mo(mid) < 1) lo = mid; else hi = mid; }
+      return `Отдайте от 3 до 10 подарков и получите один случайный: от ×0,3 до ×3 от их суммы.${mo ? ` Больше, чем отдали, выходит примерно в ${pc(1 - hi)} контрактов.` : ""}`;
+    }
+    if (name === "arena") return `Игроки ставят в общий банк. Чем больше ставка, тем больше ваша территория. На чьей территории остановится мяч, тот забирает банк за вычетом ${pc(1 - rtp("arena"))}.`;
+    if (name === "crash") return `Ракета взлетает, множитель растёт. Нажмите «Забрать» до взрыва. Примерно ${pc(Math.max(0, 1 - rtp("crash") / 1.01))} раундов взрываются сразу, на ×1,00.`;
+    if (name === "egg") return "Раз в день одно яйцо бесплатно: разбейте его и заберите звёзды или подарок. Платные яйца дают шанс на дорогие подарки.";
+    return "";
+  }
+  function openWelcome() {
+    state.welcomed = 1; save();
+    $("#wlGo").textContent = freeEggReady() ? "Разбить бесплатное яйцо" : state.balance > 0 ? "Играть" : "Пополнить баланс";
+    openSheet($("#welcomeSheet"));
+  }
+  function showHint(name) {
+    const box = $("#modeHint"), t = ruleText(name);
+    state.played = state.played || {};
+    box.hidden = !t || !!state.played[name];
+    if (!box.hidden) $("#modeHintText").textContent = t;
+  }
+  $("#modeHintX").addEventListener("click", () => { state.played = state.played || {}; state.played[App.modeName] = 1; save(); $("#modeHint").hidden = true; });
   function showMode(name) {
     if (App.mode && App.mode.leave) App.mode.leave();
     App.mode = modes[name]; App.modeName = name;
     all("#modes [data-mode]").forEach((b) => { const on = b.dataset.mode === name; b.classList.toggle("on", on); if (on) { playDuck($(".duck", b), false); b.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); } });
     all(".mode").forEach((m) => (m.hidden = m.id !== "mode-" + name));
     state.lastMode = name; save();
+    showHint(name); markEgg();
     renderStake();
     if (App.mode.enter) App.mode.enter();
     syncDucks();
@@ -1113,6 +1151,17 @@
   // ---------- запуск ----------
   function start() {
     initDucks(); initProfile(); initFriends(); initBanner(); initPromo(); initAdmin(); readLaunch();
+    markEgg();
+    // первый запуск: коротко объясняем, что это, и ведём к бесплатному яйцу
+    $("#howBtn").addEventListener("click", () => openWelcome());
+    $("#wlGo").addEventListener("click", () => {
+      closeSheet();
+      setTimeout(() => {
+        if (freeEggReady()) { showTab("pageUp"); showMode("egg"); }
+        else if (state.balance <= 0) openSheet($("#depositSheet"));
+      }, 320);
+    });
+    if (!state.welcomed && !state.stats.spins && !state.history.length) setTimeout(() => { if (!App.busy && !sheetEl) openWelcome(); }, 1600);
     if (App.initSocial) App.initSocial();
     all("[data-balance]").forEach((n) => (n.textContent = fmt(state.balance)));
     Object.values(modes).forEach((m) => m.init && m.init());

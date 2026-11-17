@@ -195,7 +195,7 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
   border-radius: 12px; background: var(--btn); color: var(--btn-text); font-size: 17px; font-weight: 600; transition: opacity .15s, transform .1s;
 }
 .cta:active:not(:disabled) { transform: scale(.98); opacity: .85; }
-.cta:disabled { background: var(--fill-2); color: var(--hint); cursor: default; }
+.cta:disabled { background: color-mix(in srgb, var(--text) 10%, var(--bg)); color: color-mix(in srgb, var(--text) 50%, var(--bg)); cursor: default; }
 
 /* ---------- шторки ---------- */
 .scrim { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, .4); opacity: 0; transition: opacity .25s; }
@@ -301,7 +301,7 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
   height: calc(56px + var(--safe-b)); padding-bottom: var(--safe-b); background: var(--card); border-top: .5px solid var(--sep);
 }
 .tab { display: grid; justify-items: center; align-content: center; gap: 1px; font-size: 10.5px; color: var(--hint); position: relative; }
-.tab .duck { filter: grayscale(1); opacity: .55; transition: transform .25s cubic-bezier(.3, 1.6, .5, 1), filter .2s, opacity .2s; }
+.tab .duck { filter: grayscale(.7); opacity: .8; transition: transform .25s cubic-bezier(.3, 1.6, .5, 1), filter .2s, opacity .2s; }
 .tab.on { color: var(--link); font-weight: 600; }
 .tab.on .duck { filter: none; opacity: 1; transform: scale(1.14) translateY(-1px); }
 .tab .dot { position: absolute; top: 7px; left: calc(50% + 10px); width: 9px; height: 9px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--card); }
@@ -379,9 +379,10 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .res-btns .cta.second { font-size: 15px; }
 .res-btns .cta[hidden] { display: none; }
 
-.miss { position: fixed; left: 50%; top: 10px; z-index: 55; transform: translate(-50%, -140%); display: flex; align-items: center; gap: 10px; padding: 8px 18px 8px 10px; border-radius: 18px;
-  background: var(--card); box-shadow: 0 10px 30px rgba(0, 0, 0, .28), 0 0 0 .5px var(--sep); transition: transform .45s cubic-bezier(.3, 1.4, .5, 1); pointer-events: none; }
-.miss.on { transform: translate(-50%, 0); }
+.miss { position: fixed; left: 50%; top: calc(62px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)); z-index: 55;
+  transform: translate(-50%, -12px); opacity: 0; visibility: hidden; max-width: min(340px, calc(100vw - 32px)); display: flex; align-items: center; gap: 10px; padding: 8px 18px 8px 10px; border-radius: 18px;
+  background: var(--card); box-shadow: 0 10px 30px rgba(0, 0, 0, .28), 0 0 0 .5px var(--sep); transition: transform .35s cubic-bezier(.3, 1.4, .5, 1), opacity .2s, visibility .2s; pointer-events: none; }
+.miss.on { transform: translate(-50%, 0); opacity: 1; visibility: visible; }
 .miss div { display: grid; }
 .miss b { font-weight: 600; font-size: 16px; }
 .miss span { color: var(--danger); font-size: 14px; display: flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
@@ -558,7 +559,7 @@ b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .egg-tier i { width: 22px; height: 28px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; box-shadow: inset 0 -2px 3px rgba(0, 0, 0, .12); }
 .egg-tier span { color: var(--hint); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .egg-tier b { font-size: 13px; display: flex; align-items: center; gap: 2px; }
-.egg-tier.on { border-color: var(--btn); background: color-mix(in srgb, var(--btn) 12%, transparent); }
+.egg-tier.on { border-color: var(--btn); }
 .egg-tier:disabled { opacity: .45; }
 
 /* кнопка «в сторис» в окне выигрыша */
@@ -585,7 +586,7 @@ img.a-ball-in { display: block; width: 100%; height: 100%; }
 .egg:not(.live) .egg-anim { background: url("ducks/hatch.webp") center / 86% no-repeat; }
 .egg-tier {
   position: relative; overflow: hidden; display: grid; justify-items: center; gap: 2px; padding: 10px 2px 9px;
-  border-radius: 14px; border: 0; background: radial-gradient(120% 90% at 50% 20%, var(--t1), color-mix(in srgb, var(--t2) 55%, var(--card)));
+  border-radius: 14px; border: 0; background: radial-gradient(120% 90% at 50% 20%, var(--t1), color-mix(in srgb, var(--t2) 55%, #fff));   /* плитка всегда светлая: тёмный текст читается в любой теме */
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .04); transition: transform .15s, box-shadow .2s;
 }
 .egg-tier .mini { display: block; width: 54px; height: 54px; margin: -4px 0 -2px; filter: drop-shadow(0 4px 5px rgba(0, 0, 0, .14)); transition: transform .3s cubic-bezier(.3, 1.6, .5, 1); }
@@ -1037,7 +1038,7 @@ button.pn-line b { color: var(--link); }
 /* логотип DuckChance: утка в фирменном жёлтом, надпись цветом текста темы */
 .logo { display: flex; align-items: center; gap: 7%; margin: 0; }
 .logo-mark { height: 100%; width: auto; flex: none; }
-.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=34") center / contain no-repeat; mask: url("img/logo-word.png?v=34") center / contain no-repeat; }
+.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=35") center / contain no-repeat; mask: url("img/logo-word.png?v=35") center / contain no-repeat; }
 .bar-logo { height: 24px; gap: 7px; flex: none; }
 .splash-logo { position: absolute; left: 50%; bottom: calc(28px + var(--safe-b)); height: 20px; gap: 6px; transform: translateX(-50%); opacity: .9; animation: logoIn .5s ease both .15s; }
 @keyframes logoIn { from { opacity: 0; } }
@@ -1182,3 +1183,30 @@ button.pn-line b { color: var(--link); }
 /* анимация подарка появляется только когда готова, без двойной картинки */
 .res-art:not(.playing) .anim, .gc-art:not(.playing) .anim, .sd-art:not(.playing) .anim { opacity: 0; }
 .res-art .anim svg, .gc-art .anim svg, .sd-art .anim svg { width: 100% !important; height: 100% !important; }
+
+/* ---------- новичкам ---------- */
+.modes button { position: relative; }
+.modes .free-tag { display: none; position: absolute; top: -6px; right: -4px; padding: 1px 6px; border-radius: 8px; background: var(--green); color: #fff;
+  font-size: 10px; font-style: normal; font-weight: 700; line-height: 15px; box-shadow: 0 2px 6px rgba(0, 0, 0, .18); }
+.modes button.free .free-tag { display: block; animation: freePulse 2s ease-in-out infinite; }
+.modes { padding-top: 7px; margin-top: -7px; }
+@keyframes freePulse { 50% { transform: scale(1.08); } }
+.mode-hint { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--r-tile, 14px); background: var(--card); }
+.mode-hint[hidden] { display: none; }
+.mode-hint .duck { width: 34px; height: 34px; flex: none; }
+.mode-hint p { flex: 1; font-size: 14px; line-height: 1.35; color: var(--text); margin: 0; }
+.mode-hint button { flex: none; width: 32px; height: 32px; margin: -6px -6px 0 0; border-radius: 16px; color: var(--hint); font-size: 20px; line-height: 1; }
+.start-empty { display: grid; justify-items: center; gap: 6px; text-align: center; }
+.start-empty b { color: var(--text); font-size: 16px; }
+.start-btns { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.start-btns .mini-btn { height: 40px; padding: 0 16px; border-radius: 20px; }
+.mini-btn.ghost { background: var(--fill); color: var(--link); }
+.dep-note { color: var(--hint); font-size: 13px; line-height: 1.4; text-align: center; margin: 0; }
+.welcome { justify-items: center; text-align: left; }
+.wl-steps { list-style: none; counter-reset: wl; display: grid; gap: 12px; margin: 0; padding: 0; width: 100%; }
+.wl-steps li { counter-increment: wl; display: grid; grid-template-columns: 30px 1fr; column-gap: 10px; row-gap: 2px; }
+.wl-steps li::before { content: counter(wl); grid-row: span 2; width: 30px; height: 30px; border-radius: 15px; background: var(--btn); color: var(--btn-text);
+  display: grid; place-items: center; font-weight: 700; font-size: 15px; }
+.wl-steps b { font-size: 16px; }
+.wl-steps span { color: var(--hint); font-size: 14px; line-height: 1.35; }
+.welcome .cta { width: 100%; }

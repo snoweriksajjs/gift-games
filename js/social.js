@@ -1331,7 +1331,8 @@
     let f;
     try { f = await call("GET", "/api/feed"); } catch { return; }
     $("#liveBox").hidden = false;
-    $("#liveOnline").textContent = fmt(f.online);
+    if (!f || !f.crash || !f.arena) return;
+    $("#liveOnline").textContent = Number.isFinite(f.online) ? fmt(f.online) : "—";
     const rooms = [];
     if (f.crash.players) rooms.push(`<i>Краш: ${f.crash.players}</i>`);
     if (f.arena.players) rooms.push(`<i>Арена: ${f.arena.players}</i>`);
