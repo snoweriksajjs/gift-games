@@ -30,12 +30,15 @@
 
   async function act() {
     if (signing) return;
-    const round = A.nextRound(), m = multOf(round.roll);
     signing = true; A.busy = true;
-    // подарки списываем и приз выдаём сразу, анимация только для вида
-    const st = A.takeStake(), bet = st.value;
-    const r = A.payout(bet * m), stats = A.state().stats;
-    stats.contracts++; if (m >= 1) { stats.wins++; stats.best = Math.max(stats.best, r.value); }
+    // контракт разыгрывает сервер: подарки списаны и приз выдан до анимации
+    const body = A.stakeBody();
+    let srv;
+    try { srv = await A.money("/api/w/play/contract", body); }
+    catch (e) { signing = false; A.busy = false; A.toast(A.moneyErr(e)); if (A.syncWallet) A.syncWallet(); return render(); }
+    A.spendLocal(body);
+    const round = srv.round, m = srv.mult, bet = srv.bet;
+    const r = { ...srv.prize, gift: srv.prize.gift ? A.byId[srv.prize.gift] : null };
     const entry = { mode: "contract", win: m >= 1, bet, id: r.gift ? r.gift.id : null, mult: m, ...round,
       text: `Контракт на ${fmt(bet)} звёзд, множитель ${xf(m)}` };
     A.log(entry, true);
@@ -50,6 +53,7 @@
     await A.wait(quick ? 80 : A.state().fast ? 300 : 600);
     board.classList.remove("sign");
     signing = false; A.busy = false;
+    A.applyServer(srv.state);
     A.logShow(entry);
     A.showPrize({ gift: r.gift, uid: r.uid, stars: r.stars, sub: xf(m) });
     render();

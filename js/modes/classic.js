@@ -49,23 +49,23 @@
 
   async function act() {
     if (spinning) return;
-    const ch = chance(), tgt = A.byId[target];
-    const round = A.nextRound(), win = round.roll < ch;
+    const tgt = A.byId[target], body = { ...A.stakeBody(), target };
     spinning = true; A.busy = true;
     $("#mode-classic .stake-slot").classList.add("loading");
-    const st = A.takeStake(), bet = st.value, stats = A.state().stats;
-    // итог записываем до анимации: если закрыть приложение во время прокрутки, выигрыш уже на месте
-    let uid = null;
-    if (win) {
-      stats.wins++; stats.best = Math.max(stats.best, tgt.price); if (ch < 0.25) stats.lowWins++;
-      stats.won = (stats.won || 0) + tgt.price;
-      uid = A.grant(tgt);
+    render(true);
+    // раунд разыгрывает сервер: он списывает ставку, решает исход и сразу зачисляет выигрыш
+    let r;
+    try { r = await A.money("/api/w/play/classic", body); }
+    catch (e) {
+      spinning = false; A.busy = false; $("#mode-classic .stake-slot").classList.remove("loading");
+      A.toast(A.moneyErr(e)); if (A.syncWallet) A.syncWallet(); return render();
     }
+    A.spendLocal(body);
+    const round = r.round, ch = r.chance, win = r.win, bet = r.bet;
     const entry = { mode: "classic", win, bet, id: tgt.id, mult: tgt.price / bet, ...round,
       text: `Апгрейд, шанс ${pct(ch)}. Для выигрыша нужно число меньше ${(ch * 100).toFixed(3).replace(".", ",")}` };
     A.log(entry, true);
-    dial.setText(null, "крутится");
-    render(true);
+    dial.setZone(ch); dial.setText(null, "крутится");
     window.scrollTo({ top: 0, behavior: "smooth" });
     await dial.spin(round.roll, ch);
 
@@ -73,10 +73,11 @@
     dial.setText(null, win ? "ваш" : "мимо");
     spinning = false; A.busy = false;
     $("#mode-classic .stake-slot").classList.remove("loading");
+    A.applyServer(r.state);
     A.logShow(entry);
     if (win) {
       target = null; gotId = tgt.id; activeMult = null;
-      A.showPrize({ gift: tgt, uid, sub: xf(tgt.price / bet) });
+      A.showPrize({ gift: tgt, uid: r.uid, sub: xf(tgt.price / bet) });
     } else {
       A.showMiss("Не выпало", `−${fmt(bet)} ${STAR}`);
     }

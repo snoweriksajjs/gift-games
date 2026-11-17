@@ -15,7 +15,7 @@
   // множитель содержимого: LO + (HI - LO) * roll^K, среднее равно HOUSE
   const multOf = (roll) => A.rangeMult(roll, A.rtp("egg"), LO, HI);          // шансы из админки, свежие на каждое яйцо
   const freeValue = (roll) => Math.round(30 + 270 * Math.pow(roll, 3));   // бесплатное яйцо: от 30 до 300 звёзд
-  const today = () => new Date().toISOString().slice(0, 10);
+  const today = () => A.mskDay();      // день по Москве, как на сервере
   // Перекраска стикера в цвет уровня: меняются только серые и белые цвета скорлупы,
   // утёнок (жёлтый, оранжевый) и тёмные контуры глаз остаются как есть.
   const hsl = (r, g, b) => {
@@ -59,7 +59,8 @@
   const FRAMES = [0, 15, 40, 100];              // кадры стикера: целое, трещина, большие трещины, утёнок
   let tier = TIERS[0], hatching = false, anim = null;
 
-  const egg = () => A.state().egg || null;
+  // яйцо, купленное до переезда денег на сервер, без приза внутри: убираем (баланс уже перенесён на сервер)
+  const egg = () => { const e = A.state().egg; if (e && !e.prize) { A.state().egg = null; return null; } return e || null; };
   const tierOf = (id) => (id === "free" ? FREE : TIERS.find((t) => t.id === id) || TIERS[0]);
   const freeReady = () => A.state().freeEgg !== today() && !(A.live && A.live.free_egg === false);
 
@@ -130,22 +131,23 @@
     A.setCta({ html: can ? `Купить за ${STAR}${fmt(tier.price)}` : "Пополнить баланс", fn: can ? buy : () => $("[data-deposit]").click() });
   }
 
-  function buy() {
+  // яйцо разыгрывает сервер сразу при покупке: приз уже зачислен, тапы только раскрывают его
+  let buying = false;
+  async function open(tid) {
     const st = A.state();
-    if (egg() || st.balance < tier.price) return;
-    st.balance -= tier.price; st.stats.wagered += tier.price; st.stats.spins++;
-    st.egg = { tier: tier.id, taps: 0, round: A.nextRound() };
-    A.save(); A.renderBalance(); A.hap.hit();
-    render(); pop();
+    if (egg() || buying) return;
+    buying = true;
+    try {
+      const r = await A.money("/api/w/play/egg", { tier: tid });
+      st.egg = { tier: tid, taps: 0, round: r.round, prize: r.prize, mult: r.mult, state: r.state };
+      if (tid === "free") st.freeEgg = today(); else st.balance = Math.max(0, st.balance - (r.bet || 0));
+      A.save(); A.renderBalance(); A.hap.hit();
+      render(); pop();
+    } catch (e) { A.toast(A.moneyErr(e)); if (A.syncWallet) A.syncWallet(); }
+    finally { buying = false; }
   }
-  function takeFree() {
-    const st = A.state();
-    if (egg() || !freeReady()) return;
-    st.freeEgg = today();
-    st.egg = { tier: "free", taps: 0, round: A.nextRound() };
-    A.save(); A.hap.hit();
-    render(); pop();
-  }
+  function buy() { if (A.state().balance >= tier.price) open(tier.id); }
+  function takeFree() { if (freeReady()) open("free"); }
   function pop() { const e = $("#eggArt"); e.classList.remove("pop"); void e.offsetWidth; e.classList.add("pop"); }
 
   async function tap() {
@@ -167,11 +169,10 @@
     box.classList.add("hatch");
     playTo(FRAMES[2], FRAMES[3]);                // скорлупа лопается, появляется утёнок
     await A.wait(A.REDUCED ? 100 : 1150);
-    const value = free ? freeValue(round.roll) : t.price * multOf(round.roll);
-    const r = A.payout(value, free), m = free ? 1 : value / t.price;
-    st.stats.eggs = (st.stats.eggs || 0) + 1;
-    if (free || m >= 1) { st.stats.wins++; st.stats.best = Math.max(st.stats.best, r.value); }
+    const p = cur.prize || { value: 0, stars: 0 };
+    const r = { ...p, gift: p.gift ? A.byId[p.gift] : null }, m = free ? 1 : cur.mult || 0;
     st.egg = null; A.save();
+    if (cur.state) A.applyServer(cur.state); else if (A.syncWallet) A.syncWallet();
     A.log({ mode: "egg", win: free || m >= 1, bet: t.price, id: r.gift ? r.gift.id : null, mult: m, ...round,
       text: free ? `Бесплатное яйцо, внутри ${fmt(r.value)} звёзд` : `${t.name} яйцо за ${fmt(t.price)} звёзд, множитель ${xf(m)}` });
     hatching = false; A.busy = false;

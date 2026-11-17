@@ -17,6 +17,9 @@
 import base64, hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.parse, urllib.request
 
 
+MONEY = re.compile(r"^/api/(w/|grants/claim|gift/(send|claim)|crash/bet|arena/(join|leave)|promo$|task/check)")
+
+
 def no_nan(c):
     """NaN и Infinity в запросе не принимаем: иначе ответы сервера перестают быть JSON."""
     raise ValueError("bad number " + c)
@@ -44,7 +47,7 @@ REF_CAPTION = ("🎁 <b>Залетай в DuckChance</b>\n\n"
                "Тут выбивают NFT-подарки Telegram: Plush Pepe, Durov's Cap, Heart Locket и ещё полсотни коллекций.\n\n"
                "🥚 Каждый день бесплатное яйцо с подарком внутри\n"
                "⚡ Апгрейд, краш, арена: раунд длится секунды\n"
-               "🔒 Любой результат можно проверить\n\n"
+               "🔒 Шанс виден до ставки\n\n"
                "Жми кнопку и забирай первое яйцо 👇")
 RESERVED = {"admin", "admins", "support", "duckchance", "telegram", "settings", "official", "moderator"}
 
@@ -90,7 +93,7 @@ for t, c, d in [("users", "created", "INTEGER"), ("users", "balance", "INTEGER")
                 ("chats", "photo", "TEXT"), ("chats", "look", "TEXT"), ("chats", "handle", "TEXT"),
                 ("chats", "perms", "TEXT"), ("chats", "pinned", "INTEGER"), ("chats", "private", "INTEGER"),
                 ("members", "title", "TEXT"), ("members", "muted", "INTEGER"), ("members", "rights", "TEXT"), ("members", "joined", "INTEGER"),
-                ("messages", "kind", "TEXT DEFAULT 'text'"), ("messages", "data", "TEXT"), ("messages", "deleted", "INTEGER")]:
+                ("transfers", "inv", "INTEGER"), ("messages", "kind", "TEXT DEFAULT 'text'"), ("messages", "data", "TEXT"), ("messages", "deleted", "INTEGER")]:
     add_column(t, c, d)
 db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_handle ON users (handle COLLATE NOCASE)")
 db.execute("CREATE UNIQUE INDEX IF NOT EXISTS chats_handle ON chats (handle COLLATE NOCASE)")
@@ -390,6 +393,8 @@ def api(method, path, uid, body, query):
     now = int(time.time())
     r = admin.handle(method, p, uid, body, query, now)   # настройки, промокоды, задания, выдачи, админка
     if r is None:
+        r = bank.handle(method, p, uid, body, query, now)  # кошелёк: состояние, раунды, продажа, стейкинг
+    if r is None:
         r = games.handle(method, p, uid, body, query, now)   # онлайн-краш, арена, лента выигрышей
     if r is not None:
         return r
@@ -398,11 +403,14 @@ def api(method, path, uid, body, query):
         sets = []
         if body.get("look") is not None:
             sets.append(("look", json.dumps(clean_look(body["look"]))))
-        if isinstance(body.get("gifts"), list):
-            sets.append(("gifts", json.dumps([g for g in body["gifts"] if isinstance(g, str) and GIFT_ID.match(g)][:60])))
-        for k in ("balance", "staked", "wagered", "won"):   # баннер профиля и фактический RTP в админке; считается на устройстве
-            if isinstance(body.get(k), int) and 0 <= body[k] < 10**12:
-                sets.append((k, body[k]))
+        w = bank.wallet(uid)
+        if w:   # деньги ведёт сервер: баланс, подарки и статистику берём из кошелька, а не с телефона
+            st = bank.stats_of(w)
+            gifts = [r["gift"] for r in db.execute("SELECT gift FROM inventory WHERE user=?", (uid,)).fetchall()]
+            gifts.sort(key=lambda g: -(catalog.get(g) or {"price": 0})["price"])
+            staked = sum(json.loads(r["stake"])["reward"] for r in db.execute("SELECT stake FROM inventory WHERE user=? AND stake IS NOT NULL", (uid,)).fetchall())
+            sets += [("gifts", json.dumps(gifts[:60])), ("balance", w["balance"]), ("staked", staked),
+                     ("wagered", int(st.get("wagered", 0))), ("won", int(st.get("won", 0)))]
         if body.get("bio") is not None:
             sets.append(("bio", clean(body["bio"], 140)))
         for k, v in sets:
@@ -755,8 +763,8 @@ def api(method, path, uid, body, query):
 
     if p == ["gift", "send"] and method == "POST":
         limit(uid, "gift", 10, 60)
-        to, gift = int(body.get("to") or 0), clean(body.get("gift"), 16)
-        if to == uid or not admin.gift_ok(gift) or not q1("SELECT id FROM users WHERE id=?", to):
+        to = int(body.get("to") or 0)
+        if to == uid or not q1("SELECT id FROM users WHERE id=?", to):
             raise HttpError(400, "bad gift")
         if blocked(to, uid):
             raise HttpError(403, "blocked")
@@ -767,9 +775,22 @@ def api(method, path, uid, body, query):
         day = (q1("SELECT COUNT(*) n FROM transfers WHERE from_user=? AND created>?", uid, now - 86400) or {}).get("n", 0)
         if day >= int(s.get("transfers_day", 10)):
             raise HttpError(429, "daily limit")
+        # подарок переходит из кошелька в кошелёк: отдать можно только свой и не из стейкинга
+        with bank.tx():
+            bank.need(uid)
+            row = bank.q1("SELECT gift FROM inventory WHERE uid=? AND user=? AND stake IS NULL", int(body.get("uid") or 0), uid)
+            if not row:
+                raise HttpError(409, "gift not yours")
+            gift = row["gift"]
+            if bank.wallet(to):        # сразу в кошелёк получателя
+                db.execute("UPDATE inventory SET user=? WHERE uid=?", (to, int(body["uid"])))
+                in_inv = 1
+            else:                      # получатель ещё не перенёс данные: подарок ляжет к нему, когда он его заберёт
+                db.execute("DELETE FROM inventory WHERE uid=?", (int(body["uid"]),))
+                in_inv = 0
         c = dm_chat(uid, to)
         mid = post_message(c["id"], uid, clean(body.get("text"), 255), gift, kind="gift", data={"to": to})
-        run("INSERT INTO transfers (from_user, to_user, gift, msg, created) VALUES (?, ?, ?, ?, ?)", uid, to, gift, mid, now)
+        run("INSERT INTO transfers (from_user, to_user, gift, msg, created, inv) VALUES (?, ?, ?, ?, ?, ?)", uid, to, gift, mid, now, in_inv)
         return {"chat": c["id"], "message": msg_out(q1("SELECT * FROM messages WHERE id=?", mid), {})}
 
     if p == ["gift", "incoming"] and method == "GET":
@@ -778,18 +799,23 @@ def api(method, path, uid, body, query):
 
     if len(p) == 3 and p[:2] == ["gift", "claim"] and method == "POST":
         tid = int(p[2])
-        with lock:   # забрать подарок можно ровно один раз
-            cur = db.execute("UPDATE transfers SET claimed=? WHERE id=? AND to_user=? AND claimed IS NULL", (now, tid, uid))
-            ok = cur.rowcount == 1
-        if not ok:
-            raise HttpError(409, "already claimed")
-        return {"gift": q1("SELECT gift FROM transfers WHERE id=?", tid)["gift"]}
+        with bank.tx():   # забрать подарок можно ровно один раз
+            bank.need(uid)
+            if db.execute("UPDATE transfers SET claimed=? WHERE id=? AND to_user=? AND claimed IS NULL", (now, tid, uid)).rowcount != 1:
+                raise HttpError(409, "already claimed")
+            t = bank.q1("SELECT gift, inv FROM transfers WHERE id=?", tid)
+            if not t["inv"]:
+                bank.add_gift(uid, t["gift"], "подарок от игрока")
+            return {"gift": t["gift"], "state": bank.state(uid)}
 
     raise HttpError(404, "not found")
 
 
 import admin                     # server/admin.py лежит рядом
 admin.bind(globals())
+import catalog
+import bank                      # кошелёк игрока: server/bank.py
+bank.bind(globals())
 import games                     # онлайн-игры: server/games.py
 games.bind(globals())
 
@@ -805,7 +831,7 @@ class Handler(BaseHTTPRequestHandler):
         if origin in ORIGINS or (DEV and origin.startswith("http://127.0.0.1")):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dev-User")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dev-User, X-App-Ver")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Max-Age", "86400")
 
@@ -864,6 +890,9 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(n) or b"{}", parse_constant=no_nan) if n else {}
                 if not isinstance(body, dict):
                     raise HttpError(400, "bad body")
+                # деньги ведёт сервер с версии 40: старое приложение из кэша не должно трогать баланс по-старому
+                if MONEY.match(url.path) and int(self.headers.get("X-App-Ver") or 0) < 40:
+                    raise HttpError(426, "update app")
             self.reply(200, api(method, url.path, uid, body, urllib.parse.parse_qs(url.query)))
         except HttpError as e:
             self.reply(e.code, {"error": e.text})

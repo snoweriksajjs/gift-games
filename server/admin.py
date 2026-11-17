@@ -313,13 +313,17 @@ def handle(method, p, uid, body, query, now):
             raise err(410, "expired")
         if pr["uses_max"] and pr["uses"] >= pr["uses_max"]:
             raise err(410, "used up")
-        with G["lock"]:
-            try:
-                G["db"].execute("INSERT INTO promo_uses (code, user, at) VALUES (?, ?, ?)", (pr["code"], uid, now))
-            except Exception:
+        import bank
+        with bank.tx():
+            bank.need(uid)
+            if G["db"].execute("INSERT OR IGNORE INTO promo_uses (code, user, at) VALUES (?, ?, ?)", (pr["code"], uid, now)).rowcount != 1:
                 raise err(409, "already used")
-            G["db"].execute("UPDATE promos SET uses=uses+1 WHERE code=?", (pr["code"],))
-        return {"kind": pr["kind"], "amount": pr["amount"] or 0, "gift": pr["gift"], "wager": pr["wager"] or 0}
+            if G["db"].execute("UPDATE promos SET uses=uses+1 WHERE code=? AND (uses_max IS NULL OR uses_max=0 OR uses<uses_max)", (pr["code"],)).rowcount != 1:
+                raise err(410, "used up")
+            r = {"kind": pr["kind"], "amount": pr["amount"] or 0, "gift": pr["gift"], "wager": pr["wager"] or 0, "note": "Промокод"}
+            r["result"] = bank.credit_grant(uid, {**r, "kind": "add" if r["kind"] == "stars" else r["kind"]})
+            r["state"] = bank.state(uid)
+            return r
 
     # ---- задания: подписка проверяется через бота ----
     if p == ["task", "check"] and method == "POST":
@@ -339,19 +343,20 @@ def handle(method, p, uid, body, query, now):
                 raise err(424, "cannot check")
             if status not in ("member", "administrator", "creator", "restricted"):
                 raise err(412, "not subscribed")
-        run("INSERT OR IGNORE INTO task_done (task, user, at) VALUES (?, ?, ?)", t["id"], uid, now)
-        return {"reward": t["reward"]}
+        import bank
+        with bank.tx():
+            bank.need(uid)
+            if G["db"].execute("INSERT OR IGNORE INTO task_done (task, user, at) VALUES (?, ?, ?)", (t["id"], uid, now)).rowcount != 1:
+                raise err(409, "done")
+            bank.move(uid, int(t["reward"] or 0), f"задание {t['id']}")
+            return {"reward": t["reward"], "state": bank.state(uid)}
 
     # ---- выдачи от админа ----
     if p == ["grants"] and method == "GET":
         return {"grants": q("SELECT id, kind, amount, gift, wager, note FROM grants WHERE user=? AND claimed IS NULL AND hold IS NULL ORDER BY id", uid)}
     if len(p) == 3 and p[:2] == ["grants", "claim"] and method == "POST":
-        gid = int(p[2])
-        with G["lock"]:
-            ok = G["db"].execute("UPDATE grants SET claimed=? WHERE id=? AND user=? AND claimed IS NULL AND hold IS NULL", (now, gid, uid)).rowcount == 1
-        if not ok:
-            raise err(409, "claimed")
-        return q1("SELECT id, kind, amount, gift, wager, note FROM grants WHERE id=?", gid)
+        import bank
+        return bank.claim_grant(uid, int(p[2]), now)
 
     if not p or p[0] != "admin":
         return None

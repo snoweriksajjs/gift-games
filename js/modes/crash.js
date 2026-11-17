@@ -269,14 +269,14 @@
     const auto = Number($("#crashAuto").value) || 0;
     if (auto >= 1.01 && Math.floor(v * auto) <= v) return A.toast(`Со ставкой ${fmt(v)} автовывод ×${String(auto).replace(".", ",")} не даст прибыли: увеличьте ставку или множитель`);
     sending = true;
-    const gifts = A.state().inv.filter((it) => A.stake.uids.has(it.uid)).map((it) => it.id);
+    const body = A.stakeBody();
     try {
-      await A.api("POST", "/api/crash/bet", { bet: v, auto: Number($("#crashAuto").value) || 0, gifts });
-      A.takeStake();
+      await A.money("/api/crash/bet", { ...body, auto: Number($("#crashAuto").value) || 0 });   // ставку списывает сервер
+      A.spendLocal(body);
       my = { bet: v, cashed: 0 };
       A.busy = true; A.hap.hit();
       renderPlayers(); renderNow(true); setCta();
-    } catch (e) { A.toast(e.status === 409 ? "Приём ставок закрыт, ждите следующий раунд" : e.status === 400 ? "Проверьте ставку и автовывод: автовывод от ×1,01 до ×999" : "Нет связи с сервером"); }
+    } catch (e) { A.toast(e.status === 409 && e.message !== "gift not yours" ? "Приём ставок закрыт, ждите следующий раунд" : e.message === "auto too high" || e.message === "bad auto" ? "Автовывод от ×1,01 до ×999" : A.moneyErr(e)); }
     finally { sending = false; }
   }
   async function cashOnline() {

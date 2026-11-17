@@ -585,11 +585,59 @@
     balInput.value = Math.max(0, Math.min(state.balance, v));
     balInput.dispatchEvent(new Event("input"));
   }));
+  // ---------- деньги ведёт сервер ----------
+  // Баланс, подарки и стейкинг хранятся на сервере, здесь их копия для показа.
+  // Ставки, выигрыши, продажа и награды идут запросами, ответ приносит новое состояние.
+  const mskDay = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);
+  const STAT_KEYS = ["spins", "wins", "lowWins", "bestStreak", "bestCrash", "contracts", "arenaWins", "eggs", "wagered", "won"];
+  function applyServer(s) {
+    if (!s || typeof s.balance !== "number") return;
+    state.balance = s.balance;
+    state.inv = Array.isArray(s.inv) ? s.inv : [];
+    if (s.fair) state.fair = { hash: s.fair.hash, clientSeed: s.fair.clientSeed, nonce: s.fair.nonce };
+    state.claimed = {};
+    Object.entries(s.claimed || {}).forEach(([k, v]) => (state.claimed[k] = v === "once" ? true : v));
+    state.freeEgg = s.freeEgg || null;
+    state.wager = s.wager || null;
+    STAT_KEYS.forEach((k) => { if (s.stats && s.stats[k] != null) state.stats[k] = s.stats[k]; });
+    const have = new Set(state.inv.filter((it) => !it.stake).map((it) => it.uid));
+    [...stake.uids].forEach((u) => { if (!have.has(u)) stake.uids.delete(u); });
+    save(); renderBalance(); renderStake(); renderProfile(); renderTasks();
+    if (App.mode && App.mode.onStake && !App.busy) App.mode.onStake();
+  }
+  // что ставим: звёзды и номера подарков
+  function stakeBody() {
+    return { stars: giftsOnly() ? 0 : Math.min(stake.stars, state.balance), uids: stakeItems().map((it) => it.uid) };
+  }
+  // ставка ушла на сервер: сразу убираем её из показа, точное состояние придёт в ответе
+  function spendLocal(body) {
+    state.balance = Math.max(0, state.balance - (body.stars || 0));
+    state.inv = state.inv.filter((it) => !(body.uids || []).includes(it.uid));
+    if (body.stars > 0 && !(body.uids || []).length) state.lastBet = { mode: App.modeName, stars: body.stars };
+    stake.uids.clear(); stake.stars = 0; balInput.value = 0;
+    renderBalance(); renderStake();
+  }
+  function moneyErr(e) {
+    const t = e && e.message, s = e && e.status;
+    return t === "not enough stars" ? "Не хватает звёзд" : t === "gift not yours" ? "Подарок уже недоступен, обновили список"
+      : s === 426 ? "Обновите приложение: закройте его и откройте заново" : s === 428 ? "Подключаемся к серверу, попробуйте через секунду"
+      : s === 429 ? "Слишком быстро, подождите секунду" : t === "chance too low" ? "Шанс меньше 1%: выберите цель дешевле"
+      : t === "target too cheap" ? "Цель должна быть дороже ставки" : t === "free egg used" ? "Бесплатное яйцо сегодня уже забрано"
+      : s >= 500 || !s ? "Сервер не отвечает, ставка не списана" : "Не получилось, попробуйте ещё раз";
+  }
+  async function money(path, body) {
+    if (!App.walletReady) { if (App.syncWallet) App.syncWallet(); throw Object.assign(new Error("not ready"), { status: 428 }); }
+    return App.api("POST", path, body);
+  }
+  async function sellUids(uids) {
+    const r = await money("/api/w/sell", { uids });
+    applyServer(r.state);
+    return r.sold;
+  }
+  const sold = (p) => p.then((sum) => { hap.coin(); renderBalance(true); toast(`Продано за ${fmt(sum)} звёзд`); return sum; }, (e) => { toast(moneyErr(e)); if (App.syncWallet) App.syncWallet(); });
   sellSel.addEventListener("click", () => {
     if (App.busy || !stake.uids.size) return;
-    const sum = sellUids([...stake.uids]);
-    hap.coin(); renderBalance(true); renderStake(); renderTasks(); renderProfile();
-    toast(`Продано за ${fmt(sum)} звёзд`);
+    sold(sellUids([...stake.uids]));
   });
   all(".stake-slot").forEach((b) => b.addEventListener("click", () => { if (!(App.mode && App.mode.lockStake && App.mode.lockStake())) openSheet(stakeSheet); }));
 
@@ -629,8 +677,7 @@
   resOk.addEventListener("click", () => { hidePrize(); });
   resSell.addEventListener("click", () => {
     if (!prize || !prize.gift) return;
-    const sum = sellUids([prize.uid]);
-    hap.coin(); renderBalance(true); toast(`Продано за ${fmt(sum)} звёзд`);
+    sold(sellUids([prize.uid]));
     hidePrize();
   });
   // выигрыш в сторис: картинка подарка лежит на сайте, ссылка ведёт в приложение
@@ -753,7 +800,9 @@
   clientSeed.addEventListener("change", () => {
     const v = clientSeed.value.trim();
     if (!v || App.busy) { clientSeed.value = state.fair.clientSeed; return; }
-    state.fair.clientSeed = v; save(); toast("Сид сохранён");
+    // сид хранится на сервере: от него и секрета сервера считается каждый следующий раунд
+    if (App.walletReady) App.api("POST", "/api/w/seed", { clientSeed: v }).then((st) => { applyServer(st); toast("Сид сохранён"); }, () => { clientSeed.value = state.fair.clientSeed; toast("Не получилось сохранить сид"); });
+    else { clientSeed.value = state.fair.clientSeed; toast("Подключаемся к серверу, попробуйте через секунду"); }
   });
 
   // ---------- пополнение звёздами Telegram ----------
@@ -805,9 +854,7 @@
     if (App.giftActions) App.giftActions(s, uid);
     sell.innerHTML = `Продать за ${STAR}${fmtS(s.price)}`;
     sell.onclick = () => {
-      const sum = sellUids([uid]); closeSheet();
-      hap.coin(); renderBalance(true); renderStake(); renderProfile(); renderTasks();
-      toast(`Продано за ${fmt(sum)} звёзд`);
+      closeSheet(); sold(sellUids([uid]));
     };
     if (cardAnim) { try { cardAnim.destroy(); } catch {} cardAnim = null; }
     openSheet(giftSheet);
@@ -932,7 +979,7 @@
 
   // ---------- задания ----------
   // Награды начисляются в браузере. В рабочем сервисе выполнение проверяет сервер.
-  const today = () => new Date().toISOString().slice(0, 10);
+  const today = () => new Date(Date.now() + 3 * 3600e3).toISOString().slice(0, 10);   // день по Москве, как на сервере
   const TASKS = [
     { id: "daily", duck: "calendar", title: "Зайти сегодня", reward: 25, goal: 1, get: () => 1, daily: true },
     { id: "first", duck: "like", title: "Сыграть первый раз", reward: 50, goal: 1, get: () => state.stats.spins },
@@ -989,18 +1036,18 @@
       if (!App.checkTask) return toast("Нет связи с сервером");
       b.disabled = true;
       App.checkTask(ct.sid).then((reward) => {
-        state.claimed[ct.id] = true; state.balance += reward; save();
+        state.claimed[ct.id] = true; save();
         hap.coin(); renderBalance(true); renderTasks(); renderStake(); toast(`+${fmt(reward)} звёзд`);
       }, (msg) => { b.disabled = false; toast(msg); });
       return;
     }
     const t = TASKS.find((x) => x.id === b.dataset.task);
     if (!t || taskDone(t) || t.get() < t.goal) return;
-    state.claimed[t.id] = t.daily ? today() : true;
-    state.balance += t.reward; save();
-    hap.coin(); hap.result(true);
-    renderBalance(true); renderTasks(); renderStake();
-    toast(`+${fmt(t.reward)} звёзд`);
+    b.disabled = true;
+    money("/api/w/task", { id: t.id }).then((r) => {
+      applyServer(r.state); hap.coin(); hap.result(true); renderBalance(true);
+      toast(`+${fmt(r.reward)} звёзд`);
+    }, (e) => { b.disabled = false; toast(e.status === 412 ? "Задание ещё не выполнено" : e.status === 409 ? "Награда уже получена" : moneyErr(e)); });
   });
 
   // ---------- друзья ----------
@@ -1049,6 +1096,20 @@
   // ---------- награды с сервера: промокоды и выдачи админа ----------
   // wager: во сколько раз нужно прокрутить сумму награды, прежде чем выводить подарки
   function applyReward(r, from) {
+    if (r && r.state) {                        // выдача уже зачислена на сервере
+      applyServer(r.state);
+      const res = r.result || {};
+      if (r.kind === "win") {
+        const g = res.gift && byId[res.gift];
+        hap.coin(); renderBalance(true);
+        return showPrize({ gift: g || null, uid: res.uid, stars: res.stars || 0, sub: r.note || "" });
+      }
+      if (r.kind === "pay") (state.deposits = state.deposits || []).push({ n: r.amount, t: Date.now() });
+      if (r.kind === "add" && /^За приглашённого друга/.test(r.note || "")) { state.refs = (state.refs || 0) + 1; state.refEarned = (state.refEarned || 0) + r.amount; renderFriends(); }
+      save(); hap.coin(); renderBalance(true);
+      const text = r.kind === "gift" && byId[r.gift] ? `${byId[r.gift].gift} (${byId[r.gift].model})` : r.kind === "set" ? `баланс ${fmt(r.amount)} звёзд` : `${r.amount >= 0 ? "+" : ""}${fmt(r.amount)} звёзд`;
+      return toast(`${from}: ${text}${r.wager > 0 ? `, отыгрыш ×${r.wager}` : ""}`);
+    }
     let value = 0, text = "";
     if (r.kind === "win") {               // выигрыш в онлайн-игре: подарок по сумме и сдача звёздами
       const res = payout(r.amount);
@@ -1268,6 +1329,7 @@
     Fair, sha256, hex, enc, nextRound, Dial, confetti, PARTY, toast,
     openSheet, closeSheet, get sheet() { return sheetEl; },
     stake, stakeValue, takeStake, stakeChips, renderStake, renderBalance,
+    applyServer, stakeBody, spendLocal, moneyErr, money, mskDay,
     showPrize, showMiss, log, logShow, renderFeed, renderTasks, renderProfile, openGift, setCta,
     locked, invTile, bannerLook, tg, BOT_USERNAME, get tab() { return tab; }, applyReward, buyStars, live: null,
     registerMode(name, m) { modes[name] = m; }, get modes() { return modes; }, showMode, start,

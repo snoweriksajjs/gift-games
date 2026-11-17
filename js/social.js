@@ -21,7 +21,7 @@
   let me = null;   // моя карточка с сервера: юзернейм, «о себе»
 
   async function call(method, path, body) {
-    const headers = { "Content-Type": "application/json" };
+    const headers = { "Content-Type": "application/json", "X-App-Ver": "40" };
     if (inTg) headers.Authorization = "tma " + tg.initData;
     else headers["X-Dev-User"] = `${devId}:${encodeURIComponent("Тест " + (devId - 1000))}`;
     const r = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -1148,11 +1148,12 @@
     if (s.price >= 10000 && !(await confirmBox(`Передать ${s.gift} (${s.model}) за ${A.fmtS(s.price)} ⭐ игроку ${peer.name}? Вернуть подарок нельзя.`))) return;
     btn.disabled = true; btn.innerHTML = `<span class="spin"></span>`;
     let r;
-    try { r = await call("POST", "/api/gift/send", { to: peer.id, gift: it.id }); } catch (e) { btn.disabled = false; btn.textContent = "Передать"; return fail(e); }
-    // подарок уходит из инвентаря только после ответа сервера
+    try { r = await call("POST", "/api/gift/send", { to: peer.id, uid }); } catch (e) { btn.disabled = false; btn.textContent = "Передать"; A.syncWallet(); return fail(e); }
+    // подарок переходит на сервере из кошелька в кошелёк, здесь только обновляем показ
     st().inv = st().inv.filter((x) => x.uid !== uid);
     A.stake.uids.delete(uid);
     A.save(); A.renderStake(); A.renderProfile(); A.renderTasks();
+    A.syncWallet();
     closeSheet(); hap.win(); toast(`${s.gift} передан ${peer.name}`);
     syncMe(false);
     if (cur && cur.id === r.chat) pullMessages(false); else openChat(r.chat);
@@ -1161,13 +1162,14 @@
   let claiming = false;
   async function claimIncoming() {
     if (!canUse || claiming) return;
+    if (!A.walletReady) await A.syncWallet();
+    if (!A.walletReady) return;
     claiming = true;
     try {
       const { gifts } = await call("GET", "/api/gift/incoming");
       for (const g of gifts) {
         if (!byId[g.gift]) continue;
-        try { await call("POST", `/api/gift/claim/${g.id}`, {}); } catch { continue; }
-        A.grant(byId[g.gift]);
+        try { const r = await call("POST", `/api/gift/claim/${g.id}`, {}); A.applyServer(r.state); } catch { continue; }
         hap.win(); toast(`${g.from.name} подарил вам ${byId[g.gift].gift}`);
       }
       if (gifts.length) { A.renderStake(); A.renderProfile(); A.renderTasks(); syncMe(false); }
@@ -1201,13 +1203,14 @@
     plan = PLANS.find((p) => p.d === Number(b.dataset.d)); hap.select();
     const it = st().inv.find((x) => x.uid === lockUid); if (it) renderPlans(byId[it.id]);
   });
-  $("#lkGo").addEventListener("click", () => {
+  $("#lkGo").addEventListener("click", async () => {
     const it = st().inv.find((x) => x.uid === lockUid); if (!it || it.stake) return;
-    const now = Date.now();
-    it.stake = { from: now, until: now + plan.d * DAY, days: plan.d, reward: reward(byId[it.id], plan) };
-    A.stake.uids.delete(it.uid);
-    A.save(); A.renderStake(); A.renderProfile();
-    closeSheet(); hap.coin(); toast(`В стейкинге до ${dateRu(it.stake.until)}`);
+    try {
+      const r = await A.money("/api/w/stake", { uid: it.uid, days: plan.d });
+      A.stake.uids.delete(it.uid);
+      A.applyServer(r.state);
+      closeSheet(); hap.coin(); toast(`В стейкинге до ${dateRu(r.stake.until)}`);
+    } catch (e) { toast(A.moneyErr(e)); A.syncWallet(); }
   });
   function renderStakes() {
     const items = st().inv.filter((it) => it.stake).sort((a, b) => a.stake.until - b.stake.until);
@@ -1228,20 +1231,17 @@
     if (b) {
       const it = st().inv.find((x) => x.uid === Number(b.dataset.claim));
       if (!it || !it.stake || Date.now() < it.stake.until) return;
-      st().balance += it.stake.reward;
-      const r = it.stake.reward; delete it.stake;
-      A.save(); A.renderBalance(true); A.renderStake(); A.renderProfile();
-      hap.coin(); return toast(`+${fmt(r)} звёзд за стейкинг`);
+      return unstake(it.uid);
     }
     const r = e.target.closest("[data-uid]");
     if (r) { const it = st().inv.find((x) => x.uid === Number(r.dataset.uid)); if (it) A.openGift(byId[it.id], it.uid); }
   });
-  function unstake(uid) {
-    const it = st().inv.find((x) => x.uid === uid); if (!it || !it.stake) return;
-    if (Date.now() >= it.stake.until) { st().balance += it.stake.reward; toast(`+${fmt(it.stake.reward)} звёзд за стейкинг`); A.renderBalance(true); }
-    else toast("Подарок снова свободен");
-    delete it.stake;
-    A.save(); A.renderStake(); A.renderProfile(); closeSheet();
+  async function unstake(uid) {
+    try {
+      const r = await A.money("/api/w/unstake", { uid });
+      A.applyServer(r.state); closeSheet();
+      if (r.reward) { hap.coin(); A.renderBalance(true); toast(`+${fmt(r.reward)} звёзд за стейкинг`); } else toast("Подарок снова свободен");
+    } catch (e) { toast(A.moneyErr(e)); A.syncWallet(); }
   }
 
   // кнопки в карточке подарка
@@ -1305,6 +1305,8 @@
   let granting = false;
   async function claimGrants() {
     if (!canUse || granting) return;
+    if (!A.walletReady) await A.syncWallet();
+    if (!A.walletReady) return;
     granting = true;
     try {
       const { grants } = await call("GET", "/api/grants");
@@ -1325,7 +1327,7 @@
     }
   };
   A.checkTask = async (id) => {
-    try { return (await call("POST", "/api/task/check", { id })).reward; } catch (e) {
+    try { const r = await call("POST", "/api/task/check", { id }); A.applyServer(r.state); return r.reward; } catch (e) {
       throw e.status === 412 ? "Сначала подпишитесь, потом проверьте" : e.status === 424 ? "Не получилось проверить подписку, попробуйте позже"
         : e.status === 409 ? "Задание уже выполнено" : "Нет связи с сервером";
     }
@@ -1334,10 +1336,34 @@
   // ---------- онлайн: выигрыш из раунда, общая лента ----------
   const claimedGrants = new Set();
   A.claimGrants = () => claimGrants();
+  // Кошелёк на сервере. При первом запуске новой версии переносим то, что лежало на телефоне (один раз).
+  let walletBusy = null;
+  A.syncWallet = () => {
+    if (!canUse) return Promise.resolve();
+    if (walletBusy) return walletBusy;
+    walletBusy = (async () => {
+      try {
+        let s = await call("GET", "/api/w/state");
+        if (s.need_import) {
+          const L = st();
+          s = await call("POST", "/api/w/import", { balance: L.balance, inv: L.inv, stats: L.stats, wager: L.wager, claimed: L.claimed,
+            freeEgg: L.freeEgg, clientSeed: L.fair && L.fair.clientSeed }).catch(async (e) => {
+            if (e.status === 409) return call("GET", "/api/w/state");     // уже перенесено с другого устройства
+            throw e;
+          });
+        }
+        A.walletReady = true;
+        A.applyServer(s);
+      } catch {} finally { walletBusy = null; }
+    })();
+    return walletBusy;
+  };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !A.busy) A.syncWallet(); });
   A.claimGrant = async (id) => {             // забрать выигрыш онлайн-раунда сразу, не дожидаясь синхронизации
     if (!id || claimedGrants.has(id)) return;
     claimedGrants.add(id);
-    try { const r = await call("POST", `/api/grants/claim/${id}`, {}); A.applyReward(r, r.note || ""); syncMe(true); } catch {}
+    if (!A.walletReady) await A.syncWallet();
+    try { const r = await call("POST", `/api/grants/claim/${id}`, {}); A.applyReward(r, r.note || ""); syncMe(true); } catch { claimedGrants.delete(id); }
   };
   A.reportWin = (mode, value, gift, mult) => {
     if (!canUse || !value) return;
@@ -1487,6 +1513,7 @@
     paintHandle();
     if (!canUse) return;
     loadConfig(); setInterval(loadConfig, 60000);
+    A.syncWallet();
     loadFeed(); setInterval(loadFeed, 6000);
     syncMe(true);
     loadChats();

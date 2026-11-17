@@ -4,12 +4,11 @@
 после раунда сервер раскрывает само число, и результат можно пересчитать.
 Выигрыш выдаётся через «выдачи» (таблица grants): игрок получит его, даже если закрыл приложение посреди раунда.
 
-Ставка списывается на устройстве игрока, сервер знает только её сумму (как и весь баланс в приложении).
-Пока баланс не переехал на сервер, ущерб от поддельных ставок ограничен: потолок ставки (max_bet),
-выход из Арены без выдачи звёзд, крупные выигрыши (hold_over) ждут подтверждения админа.
+Ставка списывается с серверного кошелька (server/bank.py). Крупные выигрыши (hold_over) ждут подтверждения админа.
 """
 import hashlib, json, math, os, secrets, threading, time
 
+import bank
 import catalog
 
 G = {}
@@ -231,14 +230,14 @@ def handle(method, p, uid, body, query, now):
                 raise err(409, "betting closed")
             if uid in crash["bets"]:
                 raise err(409, "already in")
-            bet = bet_of(body)
             auto = body.get("auto") or 0
             if isinstance(auto, bool) or not isinstance(auto, (int, float)) or not math.isfinite(auto) or auto < 0:
                 raise err(400, "bad auto")
             if auto >= 1000:                         # точка краша не выше ×1000: такой автовывод не сработал бы никогда
                 raise err(400, "auto too high")
+            bet, _, gifts = bank.charge(uid, body, MIN_BET, max_bet())
             crash["bets"][uid] = {"bet": bet, "auto": round(auto, 2) if auto >= 1.01 else 0, "cashed": None,
-                                  "gift": (clean_gifts(body.get("gifts")) or [None])[0]}
+                                  "gift": (gifts or [None])[0]}
             return crash_state(uid)
         if p == ["crash", "cashout"] and method == "POST":
             if crash["phase"] != "fly":
@@ -261,8 +260,8 @@ def handle(method, p, uid, body, query, now):
                 raise err(409, "already in")
             if len(arena["players"]) >= 12:
                 raise err(409, "room full")
-            value = bet_of(body)
-            arena["players"].append({"id": uid, "value": value, "gifts": clean_gifts(body.get("gifts"))})
+            value, stars, gifts = bank.charge(uid, body, MIN_BET, max_bet())
+            arena["players"].append({"id": uid, "value": value, "stars": stars, "gifts": gifts[:10]})
             if arena["phase"] == "wait":
                 arena.update({"phase": "gather", "ends_at": now_ms() + ARENA_GATHER_MS})
             elif len(arena["players"]) == 2:          # второй игрок: короткий отсчёт, чтобы не ждать
@@ -277,8 +276,8 @@ def handle(method, p, uid, body, query, now):
             arena["players"].remove(me)
             if not arena["players"]:
                 arena_new()
-            # ставку списало устройство игрока, оно её и вернёт: сервер звёзд не выдаёт (иначе выход печатал бы деньги)
-            return {"ok": True, "value": me["value"]}
+            bank.refund(uid, me["stars"], me["gifts"], "возврат ставки на арене")
+            return {"ok": True, "value": me["value"], "state": bank.state(uid)}
 
         if p == ["feed"] and method == "GET":
             online = (G["q1"]("SELECT COUNT(*) n FROM users WHERE seen>?", int(time.time()) - 180) or {}).get("n", 0)

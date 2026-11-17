@@ -1,7 +1,7 @@
 """Каталог подарков для сервера: тот же gifts.js, что у сайта. Подарок = коллекция + модель + фон («c12.5.33»),
 старые номера g0…g8176 переводятся через таблицу legacy. Узор только для красоты.
 Цена = минимальная цена коллекции на рынке (в звёздах) × редкость модели и фона, не больше ×15."""
-import json, os, re
+import json, math, os, re
 from urllib.parse import quote as _quote
 
 
@@ -76,10 +76,48 @@ def get(gid):
     symbol = c[4][_hash(key) % len(c[4])]
     g = {"id": gid, "gift": c[0], "model": m[0], "backdrop": b[0], "symbol": symbol, "ci": ci, "mi": mi, "li": li,
          "rare": m[1] / 10, "brare": c[3][li][1] / 10, "c1": b[1], "c2": b[2], "cp": b[3], "ct": b[4], "mult": mult(ci, mi, li),
-         "price": max(1, int(round(floors[ci] * mult(ci, mi, li)))),
+         "price": price_of(ci, mi, li),
          "img": f"{CDN}/models/{quote(c[0])}/png/{quote(m[0])}.png", "sym": f"{CDN}/patterns/{quote(c[0])}/png/{quote(symbol)}.png"}
     _cache[gid] = g
     return g
+
+
+def price_of(ci, mi, li):
+    """Цена как в браузере: Math.max(1, Math.round(floor × множитель)). Округление .5 вверх, как Math.round."""
+    return max(1, math.floor(floors[ci] * mult(ci, mi, li) + 0.5))
+
+
+_sorted = []      # по коллекциям: множители по возрастанию и их сочетания (модель, фон)
+
+
+def _prep():
+    if _sorted:
+        return
+    _load()
+    for ci, c in enumerate(D["cols"]):
+        combos = sorted(((mult(ci, mi, li), mi, li) for mi in range(len(c[2])) for li in range(len(c[3]))))
+        _sorted.append(([x[0] for x in combos], [(x[1], x[2]) for x in combos]))
+
+
+def best(value):
+    """Самый дорогой подарок не дороже суммы (выигрыш превращается в подарок, остаток звёздами)."""
+    _prep()
+    top = None
+    for ci in range(len(D["cols"])):
+        ms, idx = _sorted[ci]
+        lo, hi, ans = 0, len(ms) - 1, -1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if max(1, math.floor(floors[ci] * ms[mid] + 0.5)) <= value:
+                ans, lo = mid, mid + 1
+            else:
+                hi = mid - 1
+        if ans >= 0:
+            mi, li = idx[ans]
+            p = price_of(ci, mi, li)
+            if not top or p > top[0]:
+                top = (p, ci, mi, li)
+    return get(f"c{top[1]}.{top[2]}.{top[3]}") if top else None
 
 
 def top_of(ci):
@@ -99,7 +137,7 @@ def set_floors(f):
     for i, c in enumerate(D["cols"]):
         floors[i] = f.get(c[0]) or c[1]
     for g in _cache.values():
-        g["price"] = max(1, int(round(floors[g["ci"]] * g["mult"])))
+        g["price"] = price_of(g["ci"], g["mi"], g["li"])
 
 
 class _Lazy:

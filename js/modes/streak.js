@@ -47,22 +47,23 @@
   async function play() {
     if (running || !A.stakeValue()) return;
     running = true; A.busy = true;
-    const taken = A.takeStake(), st = A.state();
-    bet = taken.value; wins = 0;
+    const st = A.state(), body = A.stakeBody();
+    // вся серия разыгрывается на сервере сразу, приз зачислен до анимации
+    let srv;
+    try { srv = await A.money("/api/w/play/streak", body); }
+    catch (e) { running = false; A.busy = false; A.toast(A.moneyErr(e)); if (A.syncWallet) A.syncWallet(); return render(); }
+    A.spendLocal(body);
+    bet = srv.bet; wins = 0; P = srv.chance;
     let round = null;
     A.setCta({ html: "Идёт серия", disabled: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
     const dur = st.fast === 2 ? 120 : st.fast ? 900 : 1900, turns = st.fast === 2 ? 0 : st.fast ? 1 : 2;
 
     // вся серия разыгрывается сразу, приз зачисляется до анимации: если закрыть приложение посреди серии, выигрыш не пропадёт
-    const rounds = [];
-    for (let k = 0; k < MAX_WINS; k++) { const r = A.nextRound(); rounds.push(r); if (r.roll >= P) break; }
-    const total = rounds.filter((r) => r.roll < P).length, last = rounds[rounds.length - 1];
-    let res = null, entry;
-    st.stats.bestStreak = Math.max(st.stats.bestStreak, total);
+    const rounds = srv.rounds, total = srv.wins, last = rounds[rounds.length - 1];
+    let entry;
+    const res = srv.prize ? { ...srv.prize, gift: srv.prize.gift ? A.byId[srv.prize.gift] : null } : null;
     if (total > 0) {
-      res = A.payout(bet * Math.pow(2, total));
-      st.stats.wins++; st.stats.best = Math.max(st.stats.best, res.value);
       entry = { mode: "streak", win: true, bet, id: res.gift ? res.gift.id : null, mult: Math.pow(2, total), ...last,
         text: `Серия из ${total} побед, шанс раунда ${pct(P)}. Показан последний раунд` };
     } else {
@@ -88,6 +89,7 @@
     }
 
     const mult = Math.pow(2, wins);
+    A.applyServer(srv.state);
     A.logShow(entry);
     if (res) {
       dial.mark("win"); dial.setText(null, `серия ${wins}`);
