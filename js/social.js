@@ -671,8 +671,7 @@
         const g = styleOf(u.look), mine = u.id === myId;
         const gifts = (u.gifts || []).filter((id) => byId[id]);
         const acts = mine ? "" : `<div class="pn-acts">${actBtn("dm", "Сообщение", "dm")}${actBtn("gift", "Подарок", "gift")}${u.handle ? actBtn("copy", "Ссылка", "link") : ""}</div>`;
-        el.innerHTML = A.profileView(u, { look: safeLook(u.look) || {}, tab: ptab, avaHtml: ava(u, "xl"), giftMark: giftMark(u.look) })
-          .replace('<div class="tgp-body">', `<div class="tgp-body">${acts}`) + `
+        el.innerHTML = A.profileView(u, { look: safeLook(u.look) || {}, tab: ptab, avaHtml: ava(u, "xl"), giftMark: giftMark(u.look), acts }) + `
           ${mine ? "" : `<section class="list tgp-block"><button class="row pn-row ${u.blocked ? "" : "danger"}" data-act="block">${u.blocked ? "Разблокировать" : "Заблокировать"}</button></section>
           <p class="pn-note">${u.blocked ? "Игрок не может писать вам в личку и дарить подарки." : "Заблокированный игрок не сможет писать вам в личку и дарить подарки."}</p>`}`;
       };
@@ -1251,8 +1250,8 @@
     if (k) {
       const done = Date.now() >= k.until;
       $("#gcNote").innerHTML = done ? `Стейкинг завершён, награда ${STAR} ${fmt(k.reward)}` : `В стейкинге до ${dateRu(k.until)}. Награда ${STAR} ${fmt(k.reward)}`;
-      $("#gcStake").innerHTML = done ? `Забрать ${STAR}${fmt(k.reward)}` : "Вернуть досрочно";
-    } else $("#gcStake").textContent = "Стейкинг";
+      $("#gcStake span").textContent = done ? `Забрать ${fmt(k.reward)} ⭐` : "Вернуть";
+    } else $("#gcStake span").textContent = "Стейкинг";
     $("#gcStake").onclick = async () => {
       if (!k) return openLock(uid);
       if (Date.now() < k.until && !(await confirmBox("Вернуть подарок досрочно? Награда сгорит."))) return;

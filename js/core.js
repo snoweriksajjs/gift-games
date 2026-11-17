@@ -842,20 +842,24 @@
   let cardAnim = null;
   function openGift(s, uid) {
     const art = $("#gcArt");
-    art.style.cssText = bg(s);
+    $("#gcHero").style.cssText = bg(s);
+    $("#gcTitle").textContent = s.gift; $("#gcModel").textContent = s.model;
     art.innerHTML = `<i class="pat"></i><span class="anim"></span>${pic(s, true, true)}`;
     $("#gcName").textContent = s.gift;
     $("#gcNum").textContent = s.model;
-    const row = (k, v, r) => `<div class="row"><span>${k}</span><span class="grow gc-v">${v}</span><b>${String(r).replace(".", ",")}%</b></div>`;
+    const row = (k, v, r) => `<div class="row"><span>${k}</span><span class="grow gc-v">${v}</span>${r == null ? "" : `<i class="gc-pill">${String(r).replace(".", ",")}%</i>`}</div>`;
     $("#gcTable").innerHTML = row("Модель", s.model, s.rare) + row("Фон", s.backdrop, s.brare) + row("Символ", s.symbol, s.srare) +
-      `<div class="row"><span>Цена <i class="gc-src">оценка по Fragment и редкости</i></span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>`;
-    const sell = $("#gcSell");
-    sell.hidden = uid == null || locked(uid);
+      `<div class="row"><span>Стоимость</span><span class="grow"></span><b class="gc-price">${STAR} ${fmt(s.price)}</b></div>` +
+      `<p class="gc-src-note">Оценка по минимальной цене коллекции на Fragment и редкости модели и фона</p>`;
+    const sell = $("#gcSell"), out = $("#gcWithdraw");
+    sell.hidden = out.hidden = uid == null || locked(uid);
     if (App.giftActions) App.giftActions(s, uid);
-    sell.innerHTML = `Продать за ${STAR}${fmtS(s.price)}`;
-    sell.onclick = () => {
+    sell.onclick = async () => {
+      if (s.price >= 10000 && !confirm(`Продать ${s.gift} за ${fmt(s.price)} звёзд?`)) return;
       closeSheet(); sold(sellUids([uid]));
     };
+    // вывод подарка в Telegram: пока показываем условия вывода (вывод включается из админки текстом на кнопке)
+    out.onclick = () => { closeSheet(); setTimeout(() => $("#withdrawBtn").click(), 320); };
     if (cardAnim) { try { cardAnim.destroy(); } catch {} cardAnim = null; }
     openSheet(giftSheet);
     if (!REDUCED && window.lottie) {

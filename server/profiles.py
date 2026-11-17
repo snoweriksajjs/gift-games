@@ -16,6 +16,7 @@ CHECKS = ["classic", "mint", "violet", "gold", "rose", "fire", "ice", "dark"]   
 # цвет ника: однотонные для всех, градиенты для аккаунтов с галочкой
 NAME_SOLID = ["red", "orange", "violet", "green", "cyan", "blue", "pink"]
 NAME_GRAD = ["sunset", "berry", "sea", "night", "gold", "aqua", "fire"]
+FRAMES = ["wings"]                     # рамки вокруг аватарки
 STORY_TTL = 86400
 
 
@@ -31,7 +32,7 @@ def bind(g):
     CREATE TABLE IF NOT EXISTS story_views (story INTEGER, user INTEGER, at INTEGER, PRIMARY KEY (story, user));
     CREATE TABLE IF NOT EXISTS profile_views (user INTEGER, viewer INTEGER, at INTEGER, PRIMARY KEY (user, viewer));
     """)
-    for c, d in [("music", "TEXT"), ("channel", "INTEGER"), ("orbit", "TEXT"), ("verified", "INTEGER"), ("check_style", "TEXT"), ("name_color", "TEXT")]:
+    for c, d in [("music", "TEXT"), ("channel", "INTEGER"), ("orbit", "TEXT"), ("verified", "INTEGER"), ("check_style", "TEXT"), ("name_color", "TEXT"), ("frame", "TEXT")]:
         g["add_column"]("users", c, d)
 
 
@@ -72,14 +73,14 @@ def active_story(uid):
 
 def extra(uid, full=False, viewer=None):
     """Добавка к карточке игрока: галочка и истории. В полной карточке ещё музыка, канал, юзернеймы и подарки."""
-    u = q1("SELECT verified, check_style, music, channel, orbit, name_color, created FROM users WHERE id=?", uid) or {}
+    u = q1("SELECT verified, check_style, music, channel, orbit, name_color, created, frame FROM users WHERE id=?", uid) or {}
     verified = bool(u.get("verified")) or is_admin(uid)
     st = active_story(uid)
     nc = u.get("name_color")
     if nc in NAME_GRAD and not verified:
         nc = None
     out = {"verified": verified, "check": (u.get("check_style") or "classic") if verified else None, "story": st["id"] if st else 0,
-           "name_color": nc}
+           "name_color": nc, "frame": u.get("frame") if u.get("frame") in FRAMES else None}
     if st and viewer:
         out["story_seen"] = bool(q1("SELECT 1 x FROM story_views WHERE story=? AND user=?", st["id"], viewer))
     if not full:
@@ -142,6 +143,10 @@ def handle(method, p, uid, body, query, now):
                 if isinstance(g, str) and g in own and own.count(g) > pick.count(g):
                     pick.append(g)
             sets.append(("orbit", json.dumps(pick)))
+        if "frame" in body:
+            if body["frame"] and body["frame"] not in FRAMES:
+                raise err(400, "bad frame")
+            sets.append(("frame", body["frame"] or None))
         if "name_color" in body:
             nc = body["name_color"]
             if nc and nc not in NAME_SOLID + NAME_GRAD:

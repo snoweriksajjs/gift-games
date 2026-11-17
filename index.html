@@ -6,7 +6,10 @@
   <title>DuckChance</title>
   <meta name="description" content="Игры на NFT-подарки Telegram за звёзды: апгрейд, серия, контракт, арена, краш." />
   <link rel="preconnect" href="https://cdn.changes.tg" />
-  <link rel="stylesheet" href="style.css?v=43" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="style.css?v=47" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -21,7 +24,7 @@
 
   <div class="splash" id="splash" aria-hidden="true">
     <span class="duck splash-duck" data-duck="hi"></span>
-    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=43" alt=""><i class="logo-word"></i></div>
+    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=47" alt=""><i class="logo-word"></i></div>
     <div class="splash-bar"><i></i></div>
   </div>
 
@@ -29,7 +32,7 @@
     <!-- ===== Игры ===== -->
     <main class="page on" id="pageUp">
       <header class="bar">
-        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=43" alt=""><i class="logo-word"></i></h1>
+        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=47" alt=""><i class="logo-word"></i></h1>
         <div class="bar-right">
           <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
             <svg class="star"><use href="#star" /></svg><b data-balance>0</b><span class="plus" aria-hidden="true">+</span>
@@ -239,7 +242,7 @@
       </section>
       <section class="pr-me" id="pfRich" hidden></section>
       <section id="pfView" hidden></section>
-      <section class="card pf-wallet">
+      <section class="card pf-wallet" hidden>
         <span class="pf-label">Баланс</span>
         <b class="pf-bal"><svg class="star"><use href="#star" /></svg><span data-balance>0</span></b>
         <div class="pf-actions">
@@ -251,17 +254,17 @@
         <div class="pf-head"><h2>Стейкинг</h2><span id="stkSum"></span></div>
         <div class="list" id="stkList"></div>
       </section>
-      <section>
+      <section class="pf-collection" hidden>
         <div class="pf-head"><h2>Коллекция</h2><span id="profCount"></span></div>
         <div class="card pad"><div class="grid" id="profGrid"></div></div>
       </section>
       <section class="list">
-        <label class="row"><span class="duck " data-duck="music"></span><span class="grow">Звук</span><input type="checkbox" class="sw" id="soundSw" /></label>
-        <label class="row"><span class="duck " data-duck="phone"></span><span class="grow">Вибрация</span><input type="checkbox" class="sw" id="hapSw" /></label>
-        <button class="row link" id="handleBtn"><span class="duck " data-duck="user"></span><span class="grow">Имя пользователя</span><span class="hint" id="handleVal"></span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
-        <button class="row link" id="adminBtn" hidden><span class="duck " data-duck="lock"></span><span class="grow">Админ-панель</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
-        <button class="row link" id="howBtn"><span class="duck " data-duck="think"></span><span class="grow">Как играть</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
-        <button class="row link" id="fairBtn"><span class="duck " data-duck="shield"></span><span class="grow">Честная игра</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+        <label class="row"><span class="set-ic" style="--ic:#ff5b5b"><svg viewBox="0 0 24 24"><path d="M15 8a5 5 0 0 1 0 8"/><path d="M17.7 5a9 9 0 0 1 0 14"/><path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/></svg></span><span class="grow">Звук</span><input type="checkbox" class="sw" id="soundSw" /></label>
+        <label class="row"><span class="set-ic" style="--ic:#a66bff"><svg viewBox="0 0 24 24"><path d="M3 5a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z"/><path d="M8 4l2 0"/><path d="M9 17l0 .01"/><path d="M21 6l-2 3l2 3l-2 3l2 3"/></svg></span><span class="grow">Вибрация</span><input type="checkbox" class="sw" id="hapSw" /></label>
+        <button class="row link" id="handleBtn"><span class="set-ic" style="--ic:#3b9cff"><svg viewBox="0 0 24 24"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M16 12v1.5a2.5 2.5 0 0 0 5 0v-1.5a9 9 0 1 0 -5.5 8.28"/></svg></span><span class="grow">Имя пользователя</span><span class="hint" id="handleVal"></span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+        <button class="row link" id="adminBtn" hidden><span class="set-ic" style="--ic:#8e8e93"><svg viewBox="0 0 24 24"><path d="M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3"/><path d="M11 11a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M12 12l0 2.5"/></svg></span><span class="grow">Админ-панель</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+        <button class="row link" id="howBtn"><span class="set-ic" style="--ic:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 16v.01"/><path d="M12 13a2 2 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483"/></svg></span><span class="grow">Как играть</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
+        <button class="row link" id="fairBtn"><span class="set-ic" style="--ic:#34c759"><svg viewBox="0 0 24 24"><path d="M11.46 20.846a12 12 0 0 1 -7.96 -14.846a12 12 0 0 0 8.5 -3a12 12 0 0 0 8.5 3a12 12 0 0 1 -.09 7.06"/><path d="M15 19l2 2l4 -4"/></svg></span><span class="grow">Честная игра</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" /></svg></button>
       </section>
     </main>
   </div>
@@ -421,14 +424,18 @@
     <div class="grab"></div>
     <header class="sheet-head"><h3><span id="gcName"></span> <span class="hint" id="gcNum"></span></h3><button class="sheet-x" data-close>Закрыть</button></header>
     <div class="sheet-body">
-      <div class="gc-art" id="gcArt"></div>
-      <div class="list in-sheet" id="gcTable"></div>
-      <div class="gc-acts" id="gcActs">
-        <button class="cta inline second" id="gcSend">Передать</button>
-        <button class="cta inline second" id="gcStake">Стейкинг</button>
+      <div class="gc-hero" id="gcHero">
+        <div class="gc-art" id="gcArt"></div>
+        <div class="gc-ttl"><b id="gcTitle"></b><span id="gcModel"></span></div>
+        <div class="gc-acts" id="gcActs">
+          <button class="gc-act" id="gcSend"><svg viewBox="0 0 24 24"><path d="M10 14l11 -11"/><path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5"/></svg><span>Передать</span></button>
+          <button class="gc-act" id="gcStake"><svg viewBox="0 0 24 24"><path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z"/><path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/><path d="M8 11v-4a4 4 0 1 1 8 0v4"/></svg><span>Стейкинг</span></button>
+          <button class="gc-act" id="gcSell"><svg viewBox="0 0 24 24"><path d="M6.5 7.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z"/></svg><span>Продать</span></button>
+          <button class="gc-act" id="gcWithdraw"><svg viewBox="0 0 24 24"><path d="M12 4l0 12"/><path d="M8 8l4 -4l4 4"/><path d="M4 20l16 0"/></svg><span>Вывести</span></button>
+        </div>
       </div>
       <p class="gc-note" id="gcNote" hidden></p>
-      <button class="cta inline second" id="gcSell">Продать</button>
+      <div class="list in-sheet" id="gcTable"></div>
     </div>
   </section>
 
@@ -506,17 +513,17 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=43"></script>
-  <script src="js/core.js?v=43"></script>
-  <script src="js/modes/classic.js?v=43"></script>
-  <script src="js/modes/streak.js?v=43"></script>
-  <script src="js/modes/contract.js?v=43"></script>
-  <script src="js/modes/arena.js?v=43"></script>
-  <script src="js/modes/crash.js?v=43"></script>
-  <script src="js/modes/egg.js?v=43"></script>
-  <script src="js/social.js?v=43"></script>
-  <script src="js/profile.js?v=43"></script>
-  <script src="js/admin.js?v=43"></script>
+  <script src="gifts.js?v=47"></script>
+  <script src="js/core.js?v=47"></script>
+  <script src="js/modes/classic.js?v=47"></script>
+  <script src="js/modes/streak.js?v=47"></script>
+  <script src="js/modes/contract.js?v=47"></script>
+  <script src="js/modes/arena.js?v=47"></script>
+  <script src="js/modes/crash.js?v=47"></script>
+  <script src="js/modes/egg.js?v=47"></script>
+  <script src="js/social.js?v=47"></script>
+  <script src="js/profile.js?v=47"></script>
+  <script src="js/admin.js?v=47"></script>
   <script>App.start();</script>
 </body>
 </html>
