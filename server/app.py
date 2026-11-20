@@ -434,12 +434,14 @@ def api(method, path, uid, body, query):
         sets = []
         if body.get("look") is not None:
             sets.append(("look", json.dumps(clean_look(body["look"]))))
-        w = bank.wallet(uid)
+        with lock:   # соединение с базой одно на все потоки: читаем только под общей блокировкой
+            w = bank.wallet(uid)
+            rows = db.execute("SELECT gift, stake FROM inventory WHERE user=?", (uid,)).fetchall() if w else []
         if w:   # деньги ведёт сервер: баланс, подарки и статистику берём из кошелька, а не с телефона
             st = bank.stats_of(w)
-            gifts = [r["gift"] for r in db.execute("SELECT gift FROM inventory WHERE user=?", (uid,)).fetchall()]
+            gifts = [r["gift"] for r in rows]
             gifts.sort(key=lambda g: -(catalog.get(g) or {"price": 0})["price"])
-            staked = sum(json.loads(r["stake"])["reward"] for r in db.execute("SELECT stake FROM inventory WHERE user=? AND stake IS NOT NULL", (uid,)).fetchall())
+            staked = sum(json.loads(r["stake"])["reward"] for r in rows if r["stake"])
             sets += [("gifts", json.dumps(gifts[:60])), ("balance", w["balance"]), ("staked", staked),
                      ("wagered", int(st.get("wagered", 0))), ("won", int(st.get("won", 0)))]
         if body.get("bio") is not None:

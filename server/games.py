@@ -42,13 +42,14 @@ def bet_of(body, key="bet"):
 def bind(g):
     G.update(g)
     # ставки онлайн-раундов записываем в базу: если сервер перезапустился посреди раунда, ставки вернутся
-    G["db"].execute("CREATE TABLE IF NOT EXISTS live_bets (user INTEGER, mode TEXT, round INTEGER, stars INTEGER, gifts TEXT, at INTEGER)")
-    for b in [dict(r) for r in G["db"].execute("SELECT * FROM live_bets").fetchall()]:
-        try:
-            bank.refund(b["user"], b["stars"], json.loads(b["gifts"] or "[]"), "раунд прерван, ставка возвращена")
-        except Exception as e:
-            print("Не вернул ставку", b, repr(e), flush=True)
-    G["db"].execute("DELETE FROM live_bets")
+    with G["lock"]:
+        G["db"].execute("CREATE TABLE IF NOT EXISTS live_bets (user INTEGER, mode TEXT, round INTEGER, stars INTEGER, gifts TEXT, at INTEGER)")
+        for b in [dict(r) for r in G["db"].execute("SELECT rowid AS rid, * FROM live_bets").fetchall()]:
+            try:
+                bank.refund(b["user"], b["stars"], json.loads(b["gifts"] or "[]"), "раунд прерван, ставка возвращена")
+                G["db"].execute("DELETE FROM live_bets WHERE rowid=?", (b["rid"],))
+            except Exception as e:      # строка остаётся: вернём при следующем запуске
+                print("Не вернул ставку", b, repr(e), flush=True)
     threading.Thread(target=loop, daemon=True).start()
 
 
@@ -65,6 +66,19 @@ def bet_close(mode, rid, uid=None):
 
 def now_ms():
     return int(time.time() * 1000)
+
+
+_errs = {}
+
+
+def report(where, e):
+    """Ошибка игрового цикла в журнал: одна и та же не чаще раза в минуту (цикл идёт 10 раз в секунду)."""
+    key, t = (where, repr(e)), time.time()
+    if t - _errs.get(key, 0) >= 60:
+        if len(_errs) > 200:
+            _errs.clear()
+        _errs[key] = t
+        print(f"Ошибка игрового цикла ({where}):", repr(e), flush=True)
 
 
 def rtp(mode):
@@ -120,17 +134,22 @@ def crash_new():
 
 
 def crash_m(t):
-    return math.exp(SPEED * max(0, t - crash["t0"]) / 1000) if crash.get("t0") else 1.0
+    # потолок степени: если раунд почему-то не закончился вовремя, множитель не переполнится (×1000 это e^6,9)
+    return math.exp(min(30.0, SPEED * max(0, t - crash["t0"]) / 1000)) if crash.get("t0") else 1.0
 
 
 def crash_cash(uid, at):
     b = crash["bets"].get(uid)
     if not b or b["cashed"]:
         return None
-    b["cashed"] = round(at, 2)
-    value = int(b["bet"] * b["cashed"])
-    b["grant"], b["held"] = give_win(uid, value, f"Краш ×{b['cashed']:.2f}".replace(".", ","))
-    to_feed(uid, "crash", value, b["cashed"])
+    cashed = round(at, 2)
+    value = int(b["bet"] * cashed)
+    b["grant"], b["held"] = give_win(uid, value, f"Краш ×{cashed:.2f}".replace(".", ","))
+    b["cashed"] = cashed          # только после записи выигрыша: если запись не прошла, вывод можно повторить
+    try:
+        to_feed(uid, "crash", value, cashed)
+    except Exception as e:
+        report("лента", e)
     return b
 
 
@@ -145,10 +164,13 @@ def crash_tick(t):
         m = crash_m(t)
         for uid, b in list(crash["bets"].items()):           # автовывод
             if not b["cashed"] and b["auto"] and b["auto"] <= min(m, crash["cp"]) and b["auto"] < crash["cp"]:
-                crash_cash(uid, b["auto"])
+                try:
+                    crash_cash(uid, b["auto"])
+                except Exception as e:        # сбой одной ставки не останавливает раунд, попробуем на следующем шаге
+                    report("автовывод", e)
         if t >= crash["crash_at"]:
+            bet_close("crash", crash["id"])  # сначала база: если запись не прошла, раунд закончится на следующем шаге
             crash.update({"phase": "end", "end_at": t})
-            bet_close("crash", crash["id"])
             crash_hist.insert(0, crash["cp"])
             del crash_hist[14:]
     elif ph == "end" and t >= crash["end_at"] + CRASH_END_MS:
@@ -198,13 +220,20 @@ def arena_tick(t):
                 break
         payout = int(total * arena["rtp"])
         w = arena["players"][wi]
-        arena.update({"phase": "play", "play_at": t, "winner": wi, "payout": payout, "total": total})
-        bet_close("arena", arena["id"])
-        arena["grant"], arena["held"] = give_win(w["id"], payout, f"Арена, банк {total}")
-        to_feed(w["id"], "arena", payout, payout / max(1, w["value"]))
+        with bank.tx():       # выигрыш и закрытие ставок одной операцией: если запись не прошла, раунд повторит попытку
+            grant, held = give_win(w["id"], payout, f"Арена, банк {total}")
+            bet_close("arena", arena["id"])
+        arena.update({"phase": "play", "play_at": t, "winner": wi, "payout": payout, "total": total, "grant": grant, "held": held})
+        try:
+            to_feed(w["id"], "arena", payout, payout / max(1, w["value"]))
+        except Exception as e:
+            report("лента", e)
     elif ph == "play" and t >= arena["play_at"] + ARENA_SHOW_MS:
-        arena_hist.insert(0, {"winner": card(arena["players"][arena["winner"]]["id"])["name"], "total": arena["total"]})
-        del arena_hist[10:]
+        try:
+            arena_hist.insert(0, {"winner": card(arena["players"][arena["winner"]]["id"])["name"], "total": arena["total"]})
+            del arena_hist[10:]
+        except Exception as e:
+            report("история арены", e)
         arena_new()
 
 
@@ -224,13 +253,13 @@ def arena_state(uid):
 # ---------- цикл и запросы ----------
 def loop():
     while True:
-        try:
-            t = now_ms()
-            with lock:
-                crash_tick(t)
-                arena_tick(t)
-        except Exception as e:
-            print("Ошибка игрового цикла:", repr(e), flush=True)
+        t = now_ms()
+        for name, tick in (("краш", crash_tick), ("арена", arena_tick)):
+            try:
+                with lock:
+                    tick(t)
+            except Exception as e:        # сбой одной игры не останавливает другую
+                report(name, e)
         time.sleep(0.1)
 
 
@@ -302,7 +331,9 @@ def handle(method, p, uid, body, query, now):
                 arena_new()
             bank.refund(uid, me["stars"], me["gifts"], "возврат ставки на арене")
             bet_close("arena", rid, uid)
-            return {"ok": True, "value": me["value"], "state": bank.state(uid)}
+            with G["lock"]:
+                st = bank.state(uid)
+            return {"ok": True, "value": me["value"], "state": st}
 
         if p == ["feed"] and method == "GET":
             online = (G["q1"]("SELECT COUNT(*) n FROM users WHERE seen>?", int(time.time()) - 180) or {}).get("n", 0)

@@ -373,10 +373,11 @@ def handle(method, p, uid, body, query, now):
         return {"held": [r | {"player": G["user_card"](r["user"])} for r in rows]}
     if len(a) == 3 and a[0] == "held" and a[2] in ("release", "reject") and method == "POST":
         gid = int(a[1])
-        if a[2] == "release":
-            ok = G["db"].execute("UPDATE grants SET hold=NULL WHERE id=? AND hold=1 AND claimed IS NULL", (gid,)).rowcount == 1
-        else:
-            ok = G["db"].execute("UPDATE grants SET claimed=?, note=COALESCE(note,'') || ' (отклонено)' WHERE id=? AND hold=1 AND claimed IS NULL", (now, gid)).rowcount == 1
+        with G["lock"]:    # иначе запись может попасть внутрь чужой незавершённой операции и откатиться вместе с ней
+            if a[2] == "release":
+                ok = G["db"].execute("UPDATE grants SET hold=NULL WHERE id=? AND hold=1 AND claimed IS NULL", (gid,)).rowcount == 1
+            else:
+                ok = G["db"].execute("UPDATE grants SET claimed=?, note=COALESCE(note,'') || ' (отклонено)' WHERE id=? AND hold=1 AND claimed IS NULL", (now, gid)).rowcount == 1
         if not ok:
             raise err(409, "already done")
         log(uid, "held_" + a[2], {"grant": gid})
