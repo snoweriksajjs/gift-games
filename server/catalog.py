@@ -58,6 +58,28 @@ def parse(gid):
     return None
 
 
+_names = {}
+
+
+def _norm(s):
+    return re.sub(r"[^0-9a-z]", "", str(s or "").replace("\u2019", "'").lower())
+
+
+def find(collection, model, backdrop):
+    """Номер подарка по названиям из Telegram (UniqueGift: base_name, model.name, backdrop.name). Нет в каталоге: None."""
+    _load()
+    if not _names:
+        for ci, c in enumerate(D["cols"]):
+            _names[_norm(c[0])] = ci
+    ci = _names.get(_norm(collection))
+    if ci is None:
+        return None
+    c = D["cols"][ci]
+    mi = next((i for i, m in enumerate(c[2]) if _norm(m[0]) == _norm(model)), None)
+    li = next((i for i, b in enumerate(c[3]) if _norm(D["bds"][b[0]][0]) == _norm(backdrop)), None)
+    return None if mi is None or li is None else f"c{ci}.{mi}.{li}"
+
+
 def mult(ci, mi, li):
     return min(15, MM[ci][mi] * BM[ci][li])
 

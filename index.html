@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'" />
-  <link rel="stylesheet" href="style.css?v=49" />
+  <link rel="stylesheet" href="style.css?v=50" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie_light.min.js"></script>
 </head>
@@ -24,7 +24,7 @@
 
   <div class="splash" id="splash" aria-hidden="true">
     <span class="duck splash-duck" data-duck="hi"></span>
-    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=49" alt=""><i class="logo-word"></i></div>
+    <div class="logo splash-logo"><img class="logo-mark" src="img/logo-mark.png?v=50" alt=""><i class="logo-word"></i></div>
     <div class="splash-bar"><i></i></div>
   </div>
 
@@ -32,7 +32,7 @@
     <!-- ===== Игры ===== -->
     <main class="page on" id="pageUp">
       <header class="bar">
-        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=49" alt=""><i class="logo-word"></i></h1>
+        <h1 class="logo bar-logo" aria-label="DuckChance"><img class="logo-mark" src="img/logo-mark.png?v=50" alt=""><i class="logo-word"></i></h1>
         <div class="bar-right">
           <button class="stars-pill" data-deposit aria-label="Пополнить баланс">
             <svg class="star"><use href="#star" /></svg><b data-balance>0</b><span class="plus" aria-hidden="true">+</span>
@@ -349,7 +349,17 @@
         <button class="pack" data-a="500"><span class="pile-s s3"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>500</b></button>
         <button class="pack" data-a="1000"><span class="pile-s s4"><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg><svg class="star"><use href="#star" /></svg></span><b>1 000</b></button>
       </div>
-      <p class="dep-note">1 звезда в игре = 1 звезда Telegram. Звёзды тратятся только в играх и обратно не выводятся. Выигранные подарки остаются у вас, вывод подарков в Telegram откроется позже.</p>
+      <p class="dep-note" id="depNote">1 звезда в игре = 1 звезда Telegram. Звёзды тратятся только в играх и обратно не выводятся. Выигранные подарки остаются у вас, вывод подарков в Telegram откроется позже.</p>
+      <div class="dep-nft" id="depNft" hidden>
+        <div class="dep-sep"><span>или NFT-подарком</span></div>
+        <ol class="wd-steps">
+          <li><span>В своём профиле Telegram откройте NFT-подарок и нажмите «Передать»</span></li>
+          <li><span>Выберите <b class="nft-acc">@waynedeveloper</b>. Имя отправителя не скрывайте: по нему подарок найдёт ваш профиль</span></li>
+          <li><span>Через минуту подарок появится у вас в DuckChance по оценке игры</span></li>
+        </ol>
+        <div class="dep-btns"><button class="cta inline" id="depNftGo">Открыть <span class="nft-acc">@waynedeveloper</span></button><button class="cta inline ghost" id="depNftSync">Я отправил</button></div>
+        <p class="dep-note">Принимаются только NFT (улучшенные) подарки.</p>
+      </div>
     </div>
   </section>
 
@@ -370,10 +380,11 @@
 
   <section class="sheet" id="withdrawSheet" role="dialog" aria-modal="true" aria-label="Вывод" hidden>
     <div class="grab"></div>
-    <header class="sheet-head"><h3>Вывод</h3><button class="sheet-x" data-close>Закрыть</button></header>
+    <header class="sheet-head"><h3>Вывод в Telegram</h3><button class="sheet-x" data-close>Закрыть</button></header>
     <div class="sheet-body">
       <div class="dep-hero"><span class="duck xl" data-duck="bag" data-loop></span><p>Вывести можно только подарки. Звёзды не выводятся: их можно тратить в играх.</p></div>
       <p class="wd-wager" id="wdWager" hidden></p>
+      <div class="wd-box" id="wdBox"></div>
       <button class="cta inline" id="wdBtn" disabled>Вывод подарков скоро</button>
     </div>
   </section>
@@ -513,17 +524,17 @@
 
   <canvas class="fx" id="fx" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="gifts.js?v=49"></script>
-  <script src="js/core.js?v=49"></script>
-  <script src="js/modes/classic.js?v=49"></script>
-  <script src="js/modes/streak.js?v=49"></script>
-  <script src="js/modes/contract.js?v=49"></script>
-  <script src="js/modes/arena.js?v=49"></script>
-  <script src="js/modes/crash.js?v=49"></script>
-  <script src="js/modes/egg.js?v=49"></script>
-  <script src="js/social.js?v=49"></script>
-  <script src="js/profile.js?v=49"></script>
-  <script src="js/admin.js?v=49"></script>
+  <script src="gifts.js?v=50"></script>
+  <script src="js/core.js?v=50"></script>
+  <script src="js/modes/classic.js?v=50"></script>
+  <script src="js/modes/streak.js?v=50"></script>
+  <script src="js/modes/contract.js?v=50"></script>
+  <script src="js/modes/arena.js?v=50"></script>
+  <script src="js/modes/crash.js?v=50"></script>
+  <script src="js/modes/egg.js?v=50"></script>
+  <script src="js/social.js?v=50"></script>
+  <script src="js/profile.js?v=50"></script>
+  <script src="js/admin.js?v=50"></script>
   <script>App.start();</script>
 </body>
 </html>

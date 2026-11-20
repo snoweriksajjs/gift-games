@@ -10,7 +10,7 @@
 
 Старые игроки один раз переносят состояние с телефона (решение владельца: всё как есть).
 """
-import hashlib, hmac, json, math, secrets, time
+import hashlib, hmac, json, math, secrets, sys, time
 
 import catalog
 
@@ -210,9 +210,14 @@ def take_stake(uid, body, gifts_only=False):
 def pay(uid, value, reason, free=False):
     """Выигрыш: самый дорогой подарок по сумме и остаток звёздами."""
     value = int(math.floor(value))
-    g = catalog.best(value) if value > 0 else None
+    nft = sys.modules.get("nft")
+    hit = nft.prize_from_stock(uid, value) if nft else None    # настоящий подарок из запаса: его можно вывести в Telegram
+    if hit:
+        g, guid = hit
+    else:
+        g = catalog.best(value) if value > 0 else None
+        guid = add_gift(uid, g["id"], reason) if g else None
     stars = value - (g["price"] if g else 0)
-    guid = add_gift(uid, g["id"], reason) if g else None
     move(uid, stars, reason)
     if not free:
         bump(uid, won=value)
@@ -262,6 +267,8 @@ def play_classic(uid, body):
     out = {"round": rnd, "chance": ch, "win": win, "bet": value}
     if win:
         out["uid"] = add_gift(uid, t["id"], "апгрейд")
+        if sys.modules.get("nft"):
+            sys.modules["nft"].reserve(out["uid"], t["id"])
         bump(uid, wins=1, won=t["price"], **({"lowWins": 1} if ch < 0.25 else {}))
     return out
 
@@ -457,7 +464,9 @@ def handle(method, p, uid, body, query, now):
         if a == ["import"]:
             with tx():
                 do_import(uid, body)
-                return state(uid)
+            if sys.modules.get("nft"):
+                sys.modules["nft"].credit_user(uid)
+            return state(uid)
         G["limit"](uid, "bank", 40, 10)
         if a == ["seed"]:
             need(uid)
@@ -476,4 +485,6 @@ def handle(method, p, uid, body, query, now):
             out = fn(uid, body)
             out["state"] = state(uid)
             G["db"].execute("UPDATE users SET balance=? WHERE id=?", (out["state"]["balance"], uid))
-            return out
+        if a[0] == "play" and not out.get("free"):
+            G["admin"].ref_activate(uid)
+        return out

@@ -1311,7 +1311,7 @@
     A.live = c;
     A.applyPrices(c.floors || null);
     try { localStorage.setItem("dc_cfg", JSON.stringify({ rtp: c.rtp, modes: c.modes })); } catch {}   // шансы: со следующего запуска
-    const t = $("#refTerms"); if (t) t.textContent = `${fmt(c.ref_bonus)} звёзд за каждого друга, который запустит бота по вашей ссылке`;
+    const t = $("#refTerms"); if (t) t.textContent = `${fmt(c.ref_bonus)} звёзд за каждого друга, который придёт по вашей ссылке и сыграет первую игру или пополнит баланс`;
     $("#adminBtn").hidden = !c.admin;
     A.isAdmin = c.admin;
     lockScreen(c.banned ? "Доступ ограничен" : c.maintenance ? "Технические работы" : "", c.banned ? "Ваш аккаунт заблокирован. Напишите в поддержку бота." : c.maint_text);

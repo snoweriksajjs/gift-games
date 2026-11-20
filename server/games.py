@@ -91,9 +91,32 @@ def roll_of(seed):
     return int(hashlib.sha256(seed.encode()).hexdigest()[:13], 16) / 16 ** 13
 
 
+_cards = {}
+
+
 def card(uid):
+    """Имя и аватарка игрока для списков раунда: из памяти на минуту, а не из базы на каждый опрос каждого игрока."""
+    t = time.time()
+    c = _cards.get(uid)
+    if c and t - c[0] < 60:
+        return c[1]
     u = G["user_card"](uid)
-    return {"id": uid, "name": u["name"], "photo": u["photo"], "look": u["look"]}
+    c = {"id": uid, "name": u["name"], "photo": u["photo"], "look": u["look"]}
+    if len(_cards) > 5000:
+        _cards.clear()
+    _cards[uid] = (t, c)
+    return c
+
+
+_online = {"at": 0, "n": 0}
+
+
+def online_count():
+    """Сколько игроков в сети: считаем не чаще раза в 10 секунд."""
+    if time.time() - _online["at"] > 10:
+        _online["n"] = (G["q1"]("SELECT COUNT(*) n FROM users WHERE seen>?", int(time.time()) - 180) or {}).get("n", 0)
+        _online["at"] = time.time()
+    return _online["n"]
 
 
 def give_win(uid, value, note):
@@ -180,9 +203,12 @@ def crash_tick(t):
 def crash_state(uid):
     t = now_ms()
     c = crash
+    top = sorted(c["bets"].items(), key=lambda x: -x[1]["bet"])[:40]      # в ответе 40 крупных ставок и своя: при сотнях игроков ответ не раздувается
+    if uid in c["bets"] and all(u != uid for u, _ in top):
+        top.append((uid, c["bets"][uid]))
     out = {"now": t, "id": c["id"], "phase": c["phase"], "hash": c["hash"], "bet_end": c["bet_end"], "t0": c["t0"], "speed": SPEED,
-           "history": crash_hist[:14],
-           "bets": [{**card(u), "bet": b["bet"], "cashed": b["cashed"], "gift": b.get("gift")} for u, b in c["bets"].items()]}
+           "history": crash_hist[:14], "bets_total": len(c["bets"]),
+           "bets": [{**card(u), "bet": b["bet"], "cashed": b["cashed"], "gift": b.get("gift")} for u, b in top]}
     if c["phase"] == "end":
         out.update({"cp": c["cp"], "seed": c["seed"], "rtp": c["rtp"]})
     mine = c["bets"].get(uid)
@@ -289,6 +315,7 @@ def handle(method, p, uid, body, query, now):
             bet_open(uid, "crash", crash["id"], stars, gifts)
             crash["bets"][uid] = {"bet": bet, "auto": round(auto, 2) if auto >= 1.01 else 0, "cashed": None,
                                   "gift": (gifts or [None])[0]}
+            G["admin"].ref_activate(uid)          # первая ставка друга: бонус пригласившему
             return crash_state(uid)
         if p == ["crash", "cashout"] and method == "POST":
             if crash["phase"] != "fly":
@@ -314,6 +341,7 @@ def handle(method, p, uid, body, query, now):
             value, stars, gifts = bank.charge(uid, body, MIN_BET, max_bet())
             bet_open(uid, "arena", arena["id"], stars, gifts)
             arena["players"].append({"id": uid, "value": value, "stars": stars, "gifts": gifts[:10]})
+            G["admin"].ref_activate(uid)
             if arena["phase"] == "wait":
                 arena.update({"phase": "gather", "ends_at": now_ms() + ARENA_GATHER_MS})
             elif len(arena["players"]) == 2:          # второй игрок: короткий отсчёт, чтобы не ждать
@@ -336,8 +364,7 @@ def handle(method, p, uid, body, query, now):
             return {"ok": True, "value": me["value"], "state": st}
 
         if p == ["feed"] and method == "GET":
-            online = (G["q1"]("SELECT COUNT(*) n FROM users WHERE seen>?", int(time.time()) - 180) or {}).get("n", 0)
-            return {"feed": feed[:30], "online": online,
+            return {"feed": feed[:30], "online": online_count(),
                     "crash": {"phase": crash.get("phase"), "players": len(crash.get("bets", {}))},
                     "arena": {"phase": arena.get("phase"), "players": len(arena.get("players", []))}}
         if p == ["feed"] and method == "POST":     # выигрыш в одиночных режимах: апгрейд, серия, контракт, яйцо

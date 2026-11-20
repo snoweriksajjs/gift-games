@@ -24,6 +24,7 @@ DEFAULTS = {
     "hold_over": 50000,          # выигрыш в онлайн-режимах больше этой суммы ждёт подтверждения админа
     "transfers": True,           # передача подарков между игроками
     "transfers_day": 10,         # сколько подарков игрок может передать за сутки
+    "nft_account": "waynedeveloper",   # бизнес-аккаунт для NFT: на него игроки дарят подарки, с него идёт вывод
 }
 PRICES_URL = os.environ.get("PRICES_URL", "https://atlannn.github.io/telegram-gifts-floor-price/api/v1/latest.json")
 PRICES_EVERY = 3 * 3600
@@ -46,6 +47,7 @@ def bind(g):
     CREATE INDEX IF NOT EXISTS grants_user ON grants (user, claimed);
     CREATE TABLE IF NOT EXISTS admin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, admin INTEGER, action TEXT, data TEXT, at INTEGER);
     CREATE TABLE IF NOT EXISTS payments (charge TEXT PRIMARY KEY, user INTEGER, stars INTEGER, payload TEXT, at INTEGER);
+    CREATE TABLE IF NOT EXISTS referrals (friend INTEGER PRIMARY KEY, ref INTEGER, at INTEGER, paid INTEGER);
     """)
     g["add_column"]("users", "banned", "INTEGER")
     g["add_column"]("users", "rtp", "TEXT")
@@ -74,7 +76,53 @@ def record_payment(uid, stars, payload, charge):
         if new:
             G["db"].execute("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, 'pay', ?, NULL, 0, ?, ?)",
                             (uid, int(stars), "Пополнение", int(time.time())))
+    if new:
+        ref_activate(uid)
     return new
+
+
+# ---------- рефералка: бонус после первой ставки или пополнения друга ----------
+_no_ref = set()        # игроки без ожидающего бонуса: не спрашиваем базу на каждой ставке
+
+
+def ref_add(friend, ref):
+    """Друг впервые запустил бота по ссылке: бонус пригласившему ждёт первой игры или пополнения друга."""
+    if friend == ref:
+        return False
+    with G["lock"]:
+        added = G["db"].execute("INSERT OR IGNORE INTO referrals (friend, ref, at) VALUES (?, ?, ?)", (friend, ref, int(time.time()))).rowcount == 1
+    _no_ref.discard(friend)
+    return added
+
+
+def ref_activate(friend):
+    """Первая ставка или пополнение друга: начислить бонус пригласившему (один раз) и сообщить ему."""
+    if friend in _no_ref:
+        return 0
+    amount, now = int(settings().get("ref_bonus") or 0), int(time.time())
+    with G["lock"]:
+        r = G["db"].execute("SELECT ref FROM referrals WHERE friend=? AND paid IS NULL", (friend,)).fetchone()
+        if not r:
+            _no_ref.add(friend)
+            return 0
+        if G["db"].execute("UPDATE referrals SET paid=? WHERE friend=? AND paid IS NULL", (now, friend)).rowcount != 1:
+            return 0
+        ref, note = r["ref"], f"За приглашённого друга #{friend}"
+        if amount <= 0 or G["db"].execute("SELECT 1 FROM grants WHERE user=? AND note=?", (ref, note)).fetchone():
+            return 0
+        G["db"].execute("INSERT INTO grants (user, kind, amount, gift, wager, note, created) VALUES (?, 'add', ?, NULL, 0, ?, ?)",
+                        (ref, amount, note, now))
+    _no_ref.add(friend)
+    name = G["user_card"](friend)["name"]
+
+    def tell():
+        try:
+            G["tg_call"]("sendMessage", chat_id=ref, text=f"{name} сыграл первую игру по вашей ссылке: +{amount} звёзд уже ждут вас в приложении.",
+                         reply_markup={"inline_keyboard": [[{"text": f"Забрать {amount} звёзд", "web_app": {"url": f"{G['SITE']}?v={G['VER']}"}}]]})
+        except Exception:
+            pass
+    threading.Thread(target=tell, daemon=True).start()
+    return amount
 
 
 BACKUP_DIR = os.environ.get("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(os.environ.get("DB", "duckchance.db"))), "backups")
@@ -203,7 +251,7 @@ def public_config(uid):
             "rtp": base, "modes": modes, "deposits": s["deposits"], "free_egg": s["free_egg"], "ref_bonus": s["ref_bonus"],
             "max_bet": s["max_bet"], "transfers": s["transfers"],
             "maintenance": s["maintenance"] and uid not in ADMINS, "maint_text": s["maint_text"], "withdraw_note": s["withdraw_note"],
-            "tasks": tasks, "admin": uid in ADMINS}
+            "tasks": tasks, "admin": uid in ADMINS, "nft": sys.modules["nft"].public() if "nft" in sys.modules else None}
 
 
 def gift_ok(g):
@@ -479,6 +527,8 @@ def handle(method, p, uid, body, query, now):
         for k in ("maint_text", "withdraw_note"):
             if k in body:
                 s[k] = G["clean"](body[k], 200)
+        if "nft_account" in body:
+            s["nft_account"] = re.sub(r"[^0-9A-Za-z_]", "", str(body["nft_account"] or ""))[:32]
         s.pop("prices", None); s.pop("floors", None)   # цены пишет только обновление цен
         for k, v in s.items():
             run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", k, json.dumps(v, ensure_ascii=False))

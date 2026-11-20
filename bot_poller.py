@@ -19,7 +19,7 @@ import hashlib, hmac, json, os, re, sqlite3, sys, threading, time, urllib.error,
 from datetime import datetime, timedelta, timezone
 
 TOKEN = os.environ.get("TG_TOKEN") or sys.exit("Нужна переменная окружения TG_TOKEN")
-API = f"https://api.telegram.org/bot{TOKEN}/"
+API = f"{os.environ.get('TG_API', 'https://api.telegram.org').rstrip('/')}/bot{TOKEN}/"
 SITE = os.environ.get("SITE", "https://snoweriksajjs.github.io/gift-games/")
 BANNER = os.environ.get("BANNER", "https://snoweriksajjs.github.io/gift-games/img/logo-banner.jpg")
 def ref_bonus():
@@ -528,12 +528,13 @@ def on_start(m):
     # бонус пригласившему: только за нового человека и не за самого себя
     if ref and is_new and int(ref) != uid:
         name = escape(m["from"].get("first_name", "Друг"))
-        bonus = ref_grant(int(ref), uid)
+        adm = sys.modules.get("admin")
+        bonus = ref_bonus()
         try:
-            if not bonus:
-                raise RuntimeError("бонус не начислен")
-            send(int(ref), f"{e('party')} {name} пришёл по вашей ссылке. <b>+{bonus} звёзд</b> уже ждут вас в приложении.",
-                 reply_markup=play_button(f"Забрать {bonus} звёзд"))
+            if not adm or not adm.ref_add(uid, int(ref)) or not bonus:
+                raise RuntimeError("бонус не записан")
+            send(int(ref), f"{e('party')} {name} пришёл по вашей ссылке. <b>+{bonus} звёзд</b> придут, когда друг сыграет первую игру или пополнит баланс.",
+                 reply_markup=play_button("Открыть DuckChance"))
             print("Приглашение:", ref, "<-", uid, flush=True)
         except Exception as err:  # пригласивший мог не запускать бота или заблокировать его
             print("Не удалось написать пригласившему", ref, err, flush=True)
@@ -656,7 +657,8 @@ def main():
     print("Бот запущен", flush=True)
     while True:
         try:
-            updates = call("getUpdates", offset=offset, timeout=50, allowed_updates=["message", "pre_checkout_query", "callback_query"])
+            updates = call("getUpdates", offset=offset, timeout=50,
+                           allowed_updates=["message", "pre_checkout_query", "callback_query", "business_connection", "business_message"])
         except Exception as err:  # сеть моргнула: ждём и пробуем снова
             print("Ошибка сети:", err, flush=True)
             time.sleep(3)
@@ -664,6 +666,13 @@ def main():
         for u in updates:
             offset = u["update_id"] + 1
             try:
+                if u.get("business_connection") or u.get("business_message"):     # бизнес-аккаунт для NFT (server/nft.py)
+                    nft = sys.modules.get("nft")
+                    if nft and u.get("business_connection"):
+                        nft.on_connection(u["business_connection"])
+                    elif nft and (u["business_message"].get("unique_gift") or u["business_message"].get("gift")):
+                        nft.on_gift_message(u["business_message"])
+                    continue           # чужие личные переписки аккаунта бот не читает и не отвечает в них
                 q = u.get("pre_checkout_query")
                 if q:
                     ok = q.get("currency") == "XTR" and q.get("invoice_payload", "").startswith("stars_")

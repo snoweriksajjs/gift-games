@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("TG_TOKEN") or sys.exit("Нужна переменная окружения TG_TOKEN")
+TG_API = os.environ.get("TG_API", "https://api.telegram.org").rstrip("/")   # для проверки можно подставить свой сервер
 PORT = int(os.environ.get("PORT", "8787"))
 DB_PATH = os.environ.get("DB", "duckchance.db")
 MEDIA = os.environ.get("MEDIA") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "media")
@@ -88,6 +89,9 @@ os.makedirs(MEDIA, exist_ok=True)
 db = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
 db.row_factory = sqlite3.Row
 db.execute("PRAGMA journal_mode=WAL")
+db.execute("PRAGMA synchronous=NORMAL")      # с WAL база не портится, а запись не ждёт сброса на диск при каждой операции
+db.execute("PRAGMA temp_store=MEMORY")
+db.execute("PRAGMA cache_size=-16000")       # 16 МБ кэша страниц
 db.create_function("ulower", 1, lambda x: (x or "").lower())   # встроенный lower() в SQLite не знает кириллицу
 lock = threading.RLock()
 db.executescript("""
@@ -122,6 +126,7 @@ for t, c, d in [("users", "created", "INTEGER"), ("users", "balance", "INTEGER")
     add_column(t, c, d)
 db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_handle ON users (handle COLLATE NOCASE)")
 db.execute("CREATE UNIQUE INDEX IF NOT EXISTS chats_handle ON chats (handle COLLATE NOCASE)")
+db.execute("CREATE INDEX IF NOT EXISTS users_seen ON users (seen)")      # счётчик «в сети»
 
 
 def q(sql, *args):
@@ -180,20 +185,30 @@ def handle_free(h, me_user=None, me_chat=None):
     return (not u or u["id"] == me_user) and (not c or c["id"] == me_chat) and not t
 
 
+_touched = {}      # кого и с какими данными уже записали: не пишем в базу на каждом запросе
+
+
 def touch_user(u):
     uid = int(u["id"])
     name = " ".join(x for x in [u.get("first_name"), u.get("last_name")] if x)[:64] or "Игрок"
     tgname = (u.get("username") or "")[:32]
+    photo, now = (u.get("photo_url") or "")[:300], int(time.time())
+    last = _touched.get(uid)
+    if last and last[0] == (name, tgname, photo) and now - last[1] < 30:
+        return uid     # имя и аватарка те же, отметку «в сети» ставили меньше 30 секунд назад
     with lock:
         fresh = not db.execute("SELECT 1 FROM users WHERE id=?", (uid,)).fetchone()
         db.execute("""INSERT INTO users (id, name, username, photo, seen) VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET name=excluded.name, username=excluded.username, photo=excluded.photo, seen=excluded.seen""",
-                   (uid, name, tgname, (u.get("photo_url") or "")[:300], int(time.time())))
+                   (uid, name, tgname, photo, now))
         # новичку юзернейм из Telegram, если он свободен
         if fresh:
-            db.execute("UPDATE users SET created=? WHERE id=?", (int(time.time()), uid))
+            db.execute("UPDATE users SET created=? WHERE id=?", (now, uid))
         if fresh and tgname and handle_free(tgname, uid):
             db.execute("UPDATE users SET handle=? WHERE id=?", (tgname, uid))
+    if len(_touched) > 100000:
+        _touched.clear()
+    _touched[uid] = ((name, tgname, photo), now)
     return uid
 
 
@@ -373,7 +388,7 @@ last_ping = {}
 
 def tg_call(method, **params):
     data = urllib.parse.urlencode({k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else v for k, v in params.items()}).encode()
-    with urllib.request.urlopen(f"https://api.telegram.org/bot{TOKEN}/{method}", data=data, timeout=15) as r:
+    with urllib.request.urlopen(f"{TG_API}/bot{TOKEN}/{method}", data=data, timeout=15) as r:
         return json.load(r)
 
 
@@ -427,6 +442,8 @@ def api(method, path, uid, body, query):
         r = profiles.handle(method, p, uid, body, query, now)   # юзернеймы, галочка, музыка, истории
     if r is None:
         r = games.handle(method, p, uid, body, query, now)   # онлайн-краш, арена, лента выигрышей
+    if r is None:
+        r = nft.handle(method, p, uid, body, query, now)     # NFT через бизнес-аккаунт: пополнение и вывод
     if r is not None:
         return r
 
@@ -883,10 +900,13 @@ import profiles                  # профиль как в Telegram: server/pro
 profiles.bind(globals())
 import games                     # онлайн-игры: server/games.py
 games.bind(globals())
+import nft                       # NFT через бизнес-аккаунт: server/nft.py
+nft.bind(globals())
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "DuckChance"
+    timeout = 20                 # зависшее соединение не держит поток бесконечно
 
     def log_message(self, fmt, *args):
         pass
@@ -1010,6 +1030,7 @@ def main():
         sys.path[:0] = [here, os.path.dirname(here)]   # bot_poller.py лежит рядом или уровнем выше
         import bot_poller
         threading.Thread(target=bot_poller.main, daemon=True).start()
+    ThreadingHTTPServer.request_queue_size = 512     # очередь входящих соединений (было 5: при всплеске клиенты ждали секунды)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Сервер DuckChance на 127.0.0.1:{PORT}" + (" (режим проверки)" if DEV else ""), flush=True)
     srv.serve_forever()

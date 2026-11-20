@@ -126,7 +126,7 @@ def tg_file(file_id, fid, kinds):
     if row and G["clean_media"](row["url"], kinds):
         return row["url"]
     path = G["tg_call"]("getFile", file_id=file_id)["result"]["file_path"]
-    with urllib.request.urlopen(f"https://api.telegram.org/file/bot{G['TOKEN']}/{path}", timeout=60) as r:
+    with urllib.request.urlopen(f"{G['TG_API']}/file/bot{G['TOKEN']}/{path}", timeout=60) as r:
         raw = r.read(G["RAW_MAX"] + 1)
     if len(raw) > G["RAW_MAX"]:
         return ""

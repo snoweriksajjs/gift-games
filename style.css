@@ -1038,7 +1038,7 @@ button.pn-line b { color: var(--link); }
 /* логотип DuckChance: утка в фирменном жёлтом, надпись цветом текста темы */
 .logo { display: flex; align-items: center; gap: 7%; margin: 0; }
 .logo-mark { height: 100%; width: auto; flex: none; }
-.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=49") center / contain no-repeat; mask: url("img/logo-word.png?v=49") center / contain no-repeat; }
+.logo-word { display: block; height: 66%; aspect-ratio: 920 / 125; background: var(--text); -webkit-mask: url("img/logo-word.png?v=50") center / contain no-repeat; mask: url("img/logo-word.png?v=50") center / contain no-repeat; }
 .bar-logo { height: 24px; gap: 7px; flex: none; }
 .splash-logo { position: absolute; left: 50%; bottom: calc(28px + var(--safe-b)); height: 20px; gap: 6px; transform: translateX(-50%); opacity: .9; animation: logoIn .5s ease both .15s; }
 @keyframes logoIn { from { opacity: 0; } }
@@ -1522,3 +1522,33 @@ body.has-mbar .adm-head { padding-top: 10px; }
 .ch-verified { display: flex; align-items: center; gap: 6px; margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--card); font-size: 13.5px; font-weight: 600; }
 .ch-verified .vcheck { margin: 0; flex: none; }
 .st-checks { margin: 0; }
+
+/* ---------- NFT: пополнение подарком и вывод в Telegram ---------- */
+.dep-nft { display: grid; gap: 12px; }
+.dep-nft[hidden] { display: none; }
+.dep-sep { display: flex; align-items: center; gap: 10px; color: var(--hint); font-size: 13px; }
+.dep-sep::before, .dep-sep::after { content: ""; flex: 1; height: .5px; background: var(--sep); }
+.dep-btns { display: grid; gap: 8px; }
+.dep-btns .cta { min-width: 0; }
+.cta.ghost { background: var(--fill); color: var(--link); }
+.wd-box { display: grid; gap: 12px; }
+.wd-box:empty { display: none; }
+.wd-steps { list-style: none; counter-reset: wd; display: grid; gap: 10px; margin: 0; padding: 12px 14px; border-radius: 14px; background: var(--card); }
+.wd-steps li { counter-increment: wd; display: grid; grid-template-columns: 24px 1fr; gap: 10px; font-size: 14px; line-height: 1.35; }
+.wd-steps li::before { content: counter(wd); width: 24px; height: 24px; border-radius: 12px; background: var(--btn); color: var(--btn-text);
+  display: grid; place-items: center; font-size: 13px; font-weight: 700; }
+.wd-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.wd-item { display: grid; gap: 6px; justify-items: stretch; text-align: center; }
+.wd-item .gift { cursor: default; }
+.wd-item .mini-btn { width: 100%; height: 34px; }
+.wd-item .mini-btn:disabled { background: var(--fill); color: var(--hint); }
+.wd-fee { font-size: 12px; color: var(--hint); }
+.wd-fee .star { width: 12px; height: 12px; vertical-align: -2px; }
+.wd-empty { margin: 0; padding: 14px; border-radius: 14px; background: var(--card); color: var(--hint); font-size: 14px; line-height: 1.4; text-align: center; }
+.wd-miss { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: center; padding: 12px; border-radius: 14px; background: var(--card); }
+.wd-miss p { margin: 0; color: var(--hint); font-size: 13.5px; line-height: 1.4; }
+.wd-miss b { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+.wd-miss .gift { cursor: default; }
+.adm-nft .grow { display: grid; gap: 2px; min-width: 0; }
+.adm-nft i { font-style: normal; font-size: 12.5px; color: var(--hint); }
+.adm-nft em, .adm-view .pn-row em { font-style: normal; font-size: 13px; color: var(--hint); flex: none; }

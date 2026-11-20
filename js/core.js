@@ -828,14 +828,97 @@
     });
   }
   $("#amounts").addEventListener("click", (e) => { const b = e.target.closest("[data-a]"); if (b) buyStars(Number(b.dataset.a)); });
-  all("[data-deposit]").forEach((b) => b.addEventListener("click", () => openSheet($("#depositSheet"))));
-  $("#withdrawBtn").addEventListener("click", () => {
+  // ---------- NFT через бизнес-аккаунт: пополнение подарком и вывод в Telegram (server/nft.py) ----------
+  const nftCfg = () => (App.live && App.live.nft) || null;
+  const nftAcc = () => "@" + ((nftCfg() && nftCfg().account) || "waynedeveloper");
+  const openTgLink = (u) => { if (inTg && tg.openTelegramLink) tg.openTelegramLink(u); else window.open(u, "_blank"); };
+  const ask = (text) => new Promise((res) => { if (inTg && tg.showConfirm) { try { return tg.showConfirm(text, (ok) => res(!!ok)); } catch {} } res(window.confirm(text)); });
+  function paintDeposit() {
+    const c = nftCfg();
+    $("#depNft").hidden = !(c && c.deposit);
+    all(".nft-acc").forEach((n) => (n.textContent = nftAcc()));
+    $("#depNote").textContent = "1 звезда в игре = 1 звезда Telegram. Звёзды тратятся только в играх и обратно не выводятся. " +
+      (c && c.withdraw ? "Подарки из наличия можно вывести в Telegram." : "Выигранные подарки остаются у вас, вывод подарков в Telegram откроется позже.");
+  }
+  all("[data-deposit]").forEach((b) => b.addEventListener("click", () => { paintDeposit(); openSheet($("#depositSheet")); }));
+  $("#depNftGo").addEventListener("click", () => openTgLink("https://t.me/" + nftAcc().slice(1)));
+  $("#depNftSync").addEventListener("click", async () => {
+    if (!App.api) return;
+    try { await App.api("POST", "/api/nft/sync", {}); } catch (e) { if (e && e.status === 429) return toast("Уже проверяем, подождите минуту"); }
+    toast("Проверяем подарки, это займёт до минуты");
+    [5000, 12000, 30000, 60000].forEach((ms) => setTimeout(() => App.syncWallet && App.syncWallet(), ms));
+  });
+
+  let wdFocus = null;
+  function wagerNote() {
     const w = state.wager, left = w ? Math.max(0, Math.ceil(w.need - w.done)) : 0;
     $("#wdWager").hidden = !left;
     if (left) $("#wdWager").innerHTML = `Чтобы вывести подарки, отыграйте ещё ${STAR} <b>${fmt(left)}</b>. Отыграно ${fmt(w.done)} из ${fmt(w.need)}.<i style="width:${Math.min(100, (w.done / w.need) * 100)}%"></i>`;
-    $("#wdBtn").textContent = (App.live && App.live.withdraw_note) || "Вывод подарков скоро";
-    openSheet($("#withdrawSheet"));
+  }
+  async function openWithdraw(focus) {
+    wdFocus = focus == null ? null : focus;
+    wagerNote();
+    const c = nftCfg();
+    if (!c || !c.withdraw || !App.api) {        // вывод ещё не подключён: надпись из админки
+      $("#wdBox").innerHTML = "";
+      $("#wdBtn").hidden = false;
+      $("#wdBtn").textContent = (App.live && App.live.withdraw_note) || "Вывод подарков скоро";
+      openSheet($("#withdrawSheet"));
+      return;
+    }
+    $("#wdBtn").hidden = true;
+    if (sheetEl !== $("#withdrawSheet")) { $("#wdBox").innerHTML = `<p class="wd-empty">Смотрим, что можно вывести…</p>`; openSheet($("#withdrawSheet")); }
+    try { paintWithdraw(await App.api("GET", "/api/nft/mine")); }
+    catch { $("#wdBox").innerHTML = `<p class="wd-empty">Нет связи с сервером, попробуйте ещё раз</p>`; }
+  }
+  function paintWithdraw(r) {
+    const acc = "@" + (r.account || "waynedeveloper"), can = new Map((r.items || []).map((x) => [x.uid, x]));
+    const ready = state.inv.filter((it) => !it.stake && can.has(it.uid) && byId[it.id]).sort((a, b) => byId[b.id].price - byId[a.id].price);
+    const focus = wdFocus != null ? state.inv.find((it) => it.uid === wdFocus && byId[it.id]) : null;
+    let html = "";
+    if (focus && !can.has(focus.uid)) {
+      const s = byId[focus.id];
+      html += `<div class="wd-miss">${tile(s, "sm")}<p><b>${esc(s.gift)} сейчас нет в наличии</b>Вывести можно подарки, которые лежат на аккаунте ${esc(acc)}: те, что вы пополнили NFT-подарком, и выигранные из наличия. Этот подарок можно продать за звёзды или поставить в игре.</p></div>`;
+    }
+    html += `<ol class="wd-steps"><li><span>Напишите <b>${esc(acc)}</b> любое сообщение: Telegram передаёт подарки только в чат, где недавно была переписка</span></li><li><span>Нажмите «Вывести»: подарок придёт вам в Telegram от ${esc(acc)}</span></li></ol>
+      <button class="cta inline ghost" data-wd-chat>Написать ${esc(acc)}</button>`;
+    const list = focus && can.has(focus.uid) ? [focus, ...ready.filter((it) => it.uid !== focus.uid)] : ready;
+    html += list.length
+      ? `<div class="wd-list">${list.map((it) => { const x = can.get(it.uid), s = byId[it.id];
+          return `<div class="wd-item">${tile(s, "sm")}<button class="mini-btn" data-wd="${it.uid}" data-fee="${x.fee || 0}" ${x.at ? "disabled" : ""}>${x.at ? "с " + new Date(x.at * 1000).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) : "Вывести"}</button><span class="wd-fee">${x.fee ? `комиссия ${STAR} ${fmt(x.fee)}` : "без комиссии"}</span></div>`; }).join("")}</div>`
+      : `<p class="wd-empty">Сейчас вывести нечего. Вывести можно подарки из наличия: те, что вы пополнили NFT-подарком, и выигранные из наличия.</p>`;
+    $("#wdBox").innerHTML = html;
+  }
+  $("#wdBox").addEventListener("click", async (e) => {
+    if (e.target.closest("[data-wd-chat]")) return openTgLink("https://t.me/" + nftAcc().slice(1));
+    const b = e.target.closest("[data-wd]");
+    if (!b || b.disabled) return;
+    const uid = Number(b.dataset.wd), fee = Number(b.dataset.fee) || 0, it = state.inv.find((x) => x.uid === uid), s = it && byId[it.id];
+    if (!s) return;
+    if (!(await ask(`Вывести ${s.gift} в Telegram?${fee ? ` Комиссия Telegram ${fee} звёзд спишется с баланса.` : ""}`))) return;
+    b.disabled = true; b.textContent = "Отправляем…";
+    try {
+      const r = await App.api("POST", "/api/nft/withdraw", { uid });
+      if (r.state) applyServer(r.state);
+      hap.win();
+      toast(r.checking ? "Telegram отвечает медленно: проверим передачу в течение минуты" : `${r.title || s.gift} отправлен вам в Telegram`);
+      wdFocus = null;
+      openWithdraw();
+    } catch (er) {
+      b.disabled = false; b.textContent = "Вывести";
+      const t = (er && er.message) || "";
+      toast(t === "write first" ? `Сначала напишите ${nftAcc()} любое сообщение, потом нажмите «Вывести»`
+        : t === "wager" ? "Сначала отыграйте бонус: условия вверху"
+        : t === "not in stock" || t === "gift not yours" ? "Этого подарка уже нет в наличии"
+        : t.startsWith("later:") ? "Telegram разрешит передать этот подарок позже"
+        : t === "not enough stars" ? "Не хватает звёзд на комиссию"
+        : t === "withdraw off" || t === "fee right" ? "Вывод сейчас недоступен, попробуйте позже"
+        : t.startsWith("telegram:") ? "Telegram не дал передать подарок: " + t.slice(9).trim()
+        : er && er.status === 429 ? "Слишком часто, подождите минуту" : "Не получилось вывести, попробуйте ещё раз");
+      if (t === "not in stock" || t === "gift not yours") openWithdraw();
+    }
   });
+  $("#withdrawBtn").addEventListener("click", () => openWithdraw());
 
   // ---------- карточка подарка ----------
   const giftSheet = $("#giftSheet");
@@ -858,8 +941,8 @@
       if (s.price >= 10000 && !confirm(`Продать ${s.gift} за ${fmt(s.price)} звёзд?`)) return;
       closeSheet(); sold(sellUids([uid]));
     };
-    // вывод подарка в Telegram: пока показываем условия вывода (вывод включается из админки текстом на кнопке)
-    out.onclick = () => { closeSheet(); setTimeout(() => $("#withdrawBtn").click(), 320); };
+    // вывод подарка в Telegram через бизнес-аккаунт (если не подключён, окно покажет надпись из админки)
+    out.onclick = () => { closeSheet(); setTimeout(() => openWithdraw(uid), 320); };
     if (cardAnim) { try { cardAnim.destroy(); } catch {} cardAnim = null; }
     openSheet(giftSheet);
     if (!REDUCED && window.lottie) {
@@ -1058,7 +1141,7 @@
   // Ссылка ведёт в чат с ботом. Бот видит, кто кого пригласил, и присылает пригласившему кнопку с бонусом.
   function initFriends() {
     const link = BOT_USERNAME && user ? `https://t.me/${BOT_USERNAME}?start=ref_${user.id}` : "";
-    $("#refTerms").textContent = `${REF_BONUS} звёзд за каждого друга, который запустит бота по вашей ссылке`;
+    $("#refTerms").textContent = `${(App.live && App.live.ref_bonus) ?? REF_BONUS} звёзд за каждого друга, который придёт по вашей ссылке и сыграет первую игру или пополнит баланс`;
     $("#refLink").textContent = link || "Ссылка появится после входа через Telegram";
     $("#refCopy").disabled = $("#refShare").disabled = !link;
     $("#refCopy").addEventListener("click", () => {

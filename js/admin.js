@@ -27,7 +27,7 @@
     view.className = "adm-view";
     view.hidden = true;
     view.innerHTML = `<header class="adm-head"><button class="adm-x" data-a="close"><svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8"/></svg>Назад</button><b>Админка</b><button class="adm-x" data-a="refresh">Обновить</button></header>
-      <nav class="adm-tabs">${[["home", "Обзор"], ["users", "Игроки"], ["promos", "Промокоды"], ["tasks", "Задания"], ["bc", "Рассылка"], ["settings", "Настройки"]].map(([k, v]) => `<button data-tab="${k}">${v}</button>`).join("")}</nav>
+      <nav class="adm-tabs">${[["home", "Обзор"], ["users", "Игроки"], ["promos", "Промокоды"], ["tasks", "Задания"], ["bc", "Рассылка"], ["nft", "NFT"], ["settings", "Настройки"]].map(([k, v]) => `<button data-tab="${k}">${v}</button>`).join("")}</nav>
       <div class="adm-body" id="admBody"></div>`;
     document.body.appendChild(view);
     view.addEventListener("click", (e) => {
@@ -58,7 +58,7 @@
   function loading() { body().innerHTML = `<div class="adm-load"><span class="spin"></span></div>`; }
   function render() {
     all(".adm-tabs [data-tab]", view).forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
-    ({ home, users, promos, tasks, bc, settings })[tab]();
+    ({ home, users, promos, tasks, bc, nft, settings })[tab]();
   }
 
   // ---------- обзор ----------
@@ -310,6 +310,48 @@
   }
 
   // ---------- настройки ----------
+  // ---------- NFT через бизнес-аккаунт: пополнение подарками и автоматический вывод (server/nft.py) ----------
+  const NFT_STATE = { stock: "в запасе", personal: "личный", sending: "отправляется" };
+  const DEP_STATE = { credited: "зачислен", waiting: "ждёт входа игрока", new: "зачисляется", unknown: "нет в каталоге" };
+  const WD_STATE = { done: "доставлен", failed: "не прошёл", sending: "отправляется" };
+  const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
+  function nftPaint(d) {
+    const c = d.conn, acc = c && c.username ? "@" + c.username : "@" + (d.account || "");
+    const rights = Object.entries(d.rights).map(([k, v]) => `<div class="row pn-row"><span class="grow">${esc(v)}</span><b>${c && c.rights && c.rights[k] ? "есть" : "нет"}</b></div>`).join("");
+    const status = !c ? "Бизнес-аккаунт ещё не подключал бота"
+      : !c.allowed ? `Подключился ${esc(acc)}, но это не аккаунт из настройки ниже: подключение не используется`
+      : !c.enabled ? `${esc(acc)} отключил бота` : `Подключён ${esc(acc)}`;
+    body().innerHTML = `<h4 class="adm-h">Бизнес-аккаунт</h4>
+      <section class="list"><div class="row pn-row"><span class="grow">${status}</span></div>${rights}
+        ${d.balance != null ? `<div class="row pn-row"><span class="grow">Звёзды на аккаунте (платит комиссии за вывод)</span><b>${STAR} ${fmt(d.balance)}</b></div>` : ""}
+        <div class="row pn-row"><span class="grow">Пополнение NFT</span><b>${d.deposit ? "работает" : "выключено"}</b></div>
+        <div class="row pn-row"><span class="grow">Вывод в Telegram</span><b>${d.withdraw ? "работает" : "выключен"}</b></div></section>
+      <p class="adm-note">Как подключить: 1) в @BotFather у бота включите Bot Settings → Business Mode; 2) на аккаунте ${esc("@" + (d.account || ""))} (нужен Telegram Premium) откройте Настройки → Telegram для бизнеса → Чат-боты, добавьте бота и дайте права «Подарки и звёзды»: просмотр, передача подарков, перевод звёзд. Подарки, которые были на аккаунте до первого подключения, считаются личными и не выдаются игрокам. На аккаунте должны быть звёзды: из них Telegram берёт комиссию за передачу, игрок возмещает её из игрового баланса.</p>
+      <div class="adm-btns"><button data-act="nftsync" class="main">Сверить подарки сейчас</button></div>
+      <h4 class="adm-h">Подарки на аккаунте · в запасе ${d.counts.stock || 0}, личных ${d.counts.personal || 0}, выведено ${d.counts.out || 0}</h4>
+      <section class="list">${d.stock.length ? d.stock.map((s) => `<div class="row pn-row adm-nft">
+          <span class="grow"><b>${esc(s.title)}</b><i>${s.gift && byId[s.gift] ? esc(byId[s.gift].model + " · " + byId[s.gift].backdrop) + " · " + STAR + " " + fmt(s.price || 0) : "нет в каталоге"}${s.inv ? " · закреплён за игроком" : ""}${s.movable ? "" : " · нельзя передать"}${s.fee ? ` · комиссия ${fmt(s.fee)}` : ""}</i></span>
+          ${s.state === "sending" || s.inv ? `<em>${NFT_STATE[s.state] || s.state}</em>` : `<button class="mini-btn ${s.state === "stock" ? "" : "ghost"}" data-nft="${esc(s.owned)}" data-to="${s.state === "stock" ? "personal" : "stock"}">${s.state === "stock" ? "В запасе" : "Личный"}</button>`}</div>`).join("")
+        : `<div class="row pn-row"><span class="grow">Пока пусто</span></div>`}</section>
+      <p class="adm-note">«В запасе»: подарок могут выиграть и вывести игроки. «Личный»: не трогаем. Нажмите, чтобы переключить.</p>
+      <h4 class="adm-h">Пополнения</h4>
+      <section class="list">${d.deposits.length ? d.deposits.map((x) => `<div class="row pn-row adm-nft"><span class="grow">${esc(x.title)}<i>от id ${x.sender || "скрыт"} · ${when(x.sent)}</i></span><em>${DEP_STATE[x.deposit] || esc(x.deposit)}</em></div>`).join("") : `<div class="row pn-row"><span class="grow">Пока не было</span></div>`}</section>
+      <h4 class="adm-h">Выводы</h4>
+      <section class="list">${d.withdrawals.length ? d.withdrawals.map((x) => `<div class="row pn-row adm-nft"><span class="grow">${x.gift && byId[x.gift] ? esc(byId[x.gift].gift) : "Подарок"} → id ${x.user}<i>${when(x.created)}${x.fee ? ` · комиссия ${fmt(x.fee)}` : ""}${x.error ? " · " + esc(x.error) : ""}</i></span><em>${WD_STATE[x.status] || esc(x.status)}</em></div>`).join("") : `<div class="row pn-row"><span class="grow">Пока не было</span></div>`}</section>`;
+    body().onclick = async (e) => {
+      if (e.target.closest('[data-act="nftsync"]')) {
+        try { nftPaint(await api("POST", "/api/nft/admin/sync", {})); hap.win(); toast("Подарки сверены"); } catch (er) { toast(er && er.message && er.message.startsWith("telegram") ? "Telegram ответил ошибкой: " + er.message.slice(9) : "Не получилось сверить"); }
+        return;
+      }
+      const b = e.target.closest("[data-nft]");
+      if (b) { try { nftPaint(await api("POST", "/api/nft/admin/state", { owned: b.dataset.nft, state: b.dataset.to })); hap.select && hap.select(); } catch (er) { toast("Этот подарок сейчас нельзя переключить"); } }
+    };
+  }
+  async function nft() {
+    loading();
+    try { nftPaint(await api("GET", "/api/nft/admin")); } catch (e) { fail(e); }
+  }
+
   async function settings() {
     loading();
     let s;
@@ -340,7 +382,8 @@
       </section>
       <section class="list adm-form">
         <label class="adm-lab">Текст на экране техработ</label><input id="asMaint" value="${esc(s.maint_text)}" maxlength="200">
-        <label class="adm-lab">Надпись на кнопке вывода</label><input id="asWd" value="${esc(s.withdraw_note)}" maxlength="200">
+        <label class="adm-lab">Надпись на кнопке вывода (пока вывод через бизнес-аккаунт не подключён)</label><input id="asWd" value="${esc(s.withdraw_note)}" maxlength="200">
+        <label class="adm-lab">Бизнес-аккаунт для NFT (на него дарят подарки, с него идёт вывод)</label><input id="asNftAcc" value="${esc(s.nft_account || "")}" maxlength="33" placeholder="waynedeveloper" autocapitalize="off" spellcheck="false">
         <label class="adm-lab">Бонус за приглашённого друга, звёзд</label><input id="asRef" type="number" inputmode="numeric" value="${s.ref_bonus}">
         <label class="adm-lab">Максимальная ставка в Краше и на Арене, звёзд</label><input id="asMaxBet" type="number" inputmode="numeric" value="${s.max_bet || 100000}">
         <label class="adm-lab">Онлайн-выигрыш больше этой суммы ждёт вашей проверки, звёзд</label><input id="asHold" type="number" inputmode="numeric" value="${s.hold_over || 50000}">
@@ -361,7 +404,7 @@
       const flags = {};
       all("[data-k]", body()).forEach((i) => (flags[i.dataset.k] = i.checked));
       try {
-        await api("POST", "/api/admin/settings", { rtp: Number($("#asRtp").value) / 100, modes, ...flags, star_usd: Number($("#asStar").value) || 0.015, maint_text: $("#asMaint").value, withdraw_note: $("#asWd").value, ref_bonus: Number($("#asRef").value) || 0,
+        await api("POST", "/api/admin/settings", { rtp: Number($("#asRtp").value) / 100, modes, ...flags, star_usd: Number($("#asStar").value) || 0.015, maint_text: $("#asMaint").value, withdraw_note: $("#asWd").value, nft_account: $("#asNftAcc").value.replace(/^@/, ""), ref_bonus: Number($("#asRef").value) || 0,
           max_bet: Number($("#asMaxBet").value) || 100000, hold_over: Number($("#asHold").value) || 50000, transfers_day: Number($("#asTrDay").value) || 0 });
         hap.win(); toast("Настройки сохранены");
       } catch (er) { fail(er); }
