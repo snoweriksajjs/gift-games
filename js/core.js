@@ -912,7 +912,7 @@
         : t === "not in stock" || t === "gift not yours" ? "Этого подарка уже нет в наличии"
         : t.startsWith("later:") ? "Telegram разрешит передать этот подарок позже"
         : t === "not enough stars" ? "Не хватает звёзд на комиссию"
-        : t === "withdraw off" || t === "fee right" ? "Вывод сейчас недоступен, попробуйте позже"
+        : t === "withdraw off" || t === "fee right" || t === "no stars" ? "Вывод сейчас недоступен, попробуйте позже: админ уже знает"
         : t.startsWith("telegram:") ? "Telegram не дал передать подарок: " + t.slice(9).trim()
         : er && er.status === 429 ? "Слишком часто, подождите минуту" : "Не получилось вывести, попробуйте ещё раз");
       if (t === "not in stock" || t === "gift not yours") openWithdraw();

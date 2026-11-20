@@ -404,6 +404,9 @@ def withdraw(uid, body):
         fee = int(st["fee"] or 0)
         if fee and not right(c, "can_transfer_stars"):
             raise err(503, "fee right")
+        if fee and (star_balance(c) or 0) < fee:      # комиссию платит аккаунт: без звёзд Telegram откажет
+            low_stars(fee)
+            raise err(503, "no stars")
         if fee:
             bank.move(uid, -fee, f"комиссия Telegram за вывод {st['title']}")
         bank.ex("DELETE FROM inventory WHERE uid=? AND user=?", inv_uid, uid)
@@ -427,8 +430,19 @@ def withdraw(uid, body):
     except Exception as e:                # обрыв связи: подарок мог уйти, ждём сверку
         return checking(uid, e)
     finish(rec)
+    _bal["at"] = 0                        # после передачи звёзд на аккаунте стало меньше
     with G["lock"]:
         return {"ok": True, "title": st["title"], "name": st["name"], "fee": fee, "state": bank.state(uid)}
+
+
+_low = {"at": 0}
+
+
+def low_stars(fee):
+    """Напомнить админу пополнить звёзды аккаунта: не чаще раза в час."""
+    if time.time() - _low["at"] > 3600:
+        _low["at"] = time.time()
+        admins(f"Игрок хотел вывести подарок, но на бизнес-аккаунте не хватает звёзд на комиссию Telegram ({fee}). Пополните звёзды на аккаунте @{account_name()}.")
 
 
 # ---------- админка ----------
